@@ -120,7 +120,7 @@ export function ReportSheet({ person, visible, onClose, onSubmitted }: ReportShe
           {person.name}, {person.age}
         </Text>
         <Text style={[type.callout, styles.blurb]}>
-          Let us know why you’re reporting this user. Your report is anonymous — it is filed
+          Let us know why you’re reporting this user. Your report is anonymous, filed
           against their personhood handle, not their profile.
         </Text>
       </View>

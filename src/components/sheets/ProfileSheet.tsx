@@ -3,12 +3,12 @@ import { StyleSheet, Text, View } from 'react-native';
 import { BottomSheet } from '@/components/ui/BottomSheet';
 import { Avatar } from '@/components/ui/Avatar';
 import { MetalButton } from '@/components/ui/MetalButton';
-import { BandMeter, Chip, Divider, SettingRow } from '@/components/ui/primitives';
+import { BandMeter, Chip, Divider, SettingRow, StatRow } from '@/components/ui/primitives';
 import { Icon } from '@/components/icons/Icon';
 import { ReportSheet } from '@/components/sheets/ReportSheet';
 import { alpha, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
-import { explain, match } from '@/ai/matching';
+import { match } from '@/ai/matching';
 import { BAND_LABEL, DISTANCE_LABEL, type MatchBand } from '@/chain/midnight/types';
 import { maskFor, VECTORS, type Person } from '@/data/people';
 
@@ -23,6 +23,10 @@ import { maskFor, VECTORS, type Person } from '@/data/people';
  * The compatibility block is the AI-track argument in miniature - the score is
  * computed here, on this device, from two vectors neither the server nor the
  * peer ever sees, and the drivers listed are the literal terms that produced it.
+ *
+ * It is stated as figures rather than as a sentence. The sheet is glanced at,
+ * not read, and a band and two counts survive a glance in a way that a line of
+ * prose does not.
  */
 
 export type ProfileSheetProps = {
@@ -94,7 +98,7 @@ export function ProfileSheet({
           <View style={styles.area}>
             <Icon name="pin" size={14} color={alpha.t56} />
             <Text style={[type.caption, styles.areaLabel]}>
-              {DISTANCE_LABEL[person.bucket]} · exact position withheld
+              {DISTANCE_LABEL[person.bucket]} · position withheld
             </Text>
           </View>
         </View>
@@ -108,11 +112,26 @@ export function ProfileSheet({
               </View>
               <BandMeter value={result.band} />
             </View>
-            <Text style={[type.caption, styles.matchExplain]}>{explain(result)}</Text>
+            <StatRow
+              style={styles.matchStats}
+              items={[
+                { value: `${result.band}/4`, label: 'Band', tone: 'violet' },
+                { value: String(result.drivers.length), label: 'Signals' },
+                { value: String(result.withheld.length), label: 'Closed', tone: 'muted' },
+              ]}
+            />
+
+            {result.drivers.length ? (
+              <View style={styles.driverTags}>
+                {result.drivers.slice(0, 3).map((driver) => (
+                  <Chip key={driver.dimension} label={driver.dimension} />
+                ))}
+              </View>
+            ) : null}
 
             {result.band === 0 ? (
               <Text style={[type.caption, styles.noProof]}>
-                Not enough shared signal to prove a match — the circuit would refuse.
+                Not enough shared signal. The circuit would refuse.
               </Text>
             ) : (
               <MetalButton
@@ -141,17 +160,17 @@ export function ProfileSheet({
           <SettingRow
             icon="eye-off"
             title="Hide user"
-            subtitle="They stop appearing on your map"
+            subtitle="Stops appearing on your map"
           />
           <SettingRow
             icon="block"
             title="Block user"
-            subtitle="No proofs will be exchanged either way"
+            subtitle="No proofs either way"
           />
           <SettingRow
             icon="flag"
             title="Report user"
-            subtitle="Anonymous — bound to their personhood handle"
+            subtitle="Anonymous, bound to their handle"
             tone="negative"
             onPress={() => setReporting(true)}
           />
@@ -203,7 +222,8 @@ const styles = StyleSheet.create({
   matchHead: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
   matchHeadText: { flex: 1 },
   matchTitle: { marginTop: 5 },
-  matchExplain: { marginTop: space.sm, lineHeight: 18 },
+  matchStats: { marginTop: space.lg },
+  driverTags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: space.lg },
   matchAction: { marginTop: space.lg },
   noProof: { marginTop: space.md, lineHeight: 17 },
 

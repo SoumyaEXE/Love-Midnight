@@ -7,7 +7,7 @@ import { GlowBackdrop } from '@/components/ui/GlowBackdrop';
 import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { LiquidGlass } from '@/components/glass/LiquidGlass';
 import { MetalButton } from '@/components/ui/MetalButton';
-import { Badge, Card, Divider, IconButton } from '@/components/ui/primitives';
+import { Card, Divider, IconButton, StatRow } from '@/components/ui/primitives';
 import { Icon } from '@/components/icons/Icon';
 import { alpha, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
@@ -26,6 +26,9 @@ import { useHalo } from '@/state/store';
  *
  * The Solana panel is the cross-chain half - it shows the exact memo bytes that
  * would be published, so nobody has to take the claim on faith.
+ *
+ * The header states the proof as three figures. They were prose and a pair of
+ * pills before, which is a slow way to read three numbers.
  */
 
 export default function ProofScreen() {
@@ -50,7 +53,7 @@ export default function ProofScreen() {
         <View style={[styles.missing, { paddingTop: insets.top + space['4xl'] }]}>
           <Text style={type.title3}>Proof not found</Text>
           <Text style={[type.callout, styles.missingNote]}>
-            Proofs are held in memory for this session only. Nothing is written to disk.
+            Proofs live in memory for this session only.
           </Text>
           <MetalButton label="Back" variant="metal" onPress={() => router.back()} style={styles.missingAction} />
         </View>
@@ -80,23 +83,25 @@ export default function ProofScreen() {
           <IconButton name="close" accessibilityLabel="Close" onPress={() => router.back()} />
         </View>
 
-        <View style={styles.badges}>
-          <Badge
-            label={proof.simulated ? 'Local prover' : 'Proof server'}
-            tone={proof.simulated ? 'neutral' : 'positive'}
-            icon={proof.simulated ? 'cube' : 'bolt'}
+        <Card radius={radii.card} style={styles.stats}>
+          <StatRow
+            items={[
+              { value: `${proof.provingMs}`, label: 'ms to prove', tone: 'violet' },
+              {
+                value: proof.simulated ? 'Local' : 'Server',
+                label: 'Prover',
+                tone: proof.simulated ? 'default' : 'positive',
+              },
+              { value: String(withheldFor(proof.kind).length), label: 'Withheld' },
+            ]}
           />
-          <Badge label={`${proof.provingMs} ms`} tone="violet" icon="clock" />
-        </View>
+        </Card>
 
         {proof.simulated ? (
           <Card radius={radii.lg} style={styles.notice}>
             <Text style={[type.caption, styles.noticeText]}>
-              Produced by the on-device simulator. It enforces every assertion the Compact circuit
-              enforces — openings, range, threshold — so this claim is true. It is not
-              cryptographically verifiable. Point{' '}
-              <Text style={type.captionStrong}>midnightProofServer</Text> at a running proof server
-              to produce a real proof.
+              Simulated. Every assertion the Compact circuit makes is enforced, but the result
+              is not cryptographically verifiable.
             </Text>
           </Card>
         ) : null}
@@ -143,15 +148,30 @@ export default function ProofScreen() {
         {/* Cross-chain mirror. */}
         <Text style={[type.eyebrow, styles.sectionLabel]}>Solana mirror</Text>
         <Card radius={radii.card} style={styles.solana}>
-          <Text style={[type.callout, styles.solanaNote]}>
-            Publishing this memo to Solana gives the pair a portable receipt any program can read.
-            It carries the nullifier and the band — nothing that identifies either person.
-          </Text>
+          {/* Status above the actions, not beside them.
+
+              A pill and a button are different heights and different shapes, so
+              sitting them in one row left the pill floating against the button
+              face with no edge to align to. State is not an action and does not
+              belong in the action row. */}
+          <View style={styles.mirrorState}>
+            <View
+              style={[
+                styles.mirrorDot,
+                proof.solanaSignature ? styles.mirrorDotOn : null,
+              ]}
+            />
+            <Text style={[type.caption, styles.mirrorLabel]}>
+              {proof.solanaSignature ? 'Mirrored to devnet' : 'Not yet mirrored'}
+            </Text>
+          </View>
+
           <View style={styles.memo}>
             <Text style={type.digest} numberOfLines={2}>
               {memo}
             </Text>
           </View>
+
           <View style={styles.solanaActions}>
             <MetalButton
               label={copied === 'memo' ? 'Copied' : 'Copy memo'}
@@ -159,18 +179,18 @@ export default function ProofScreen() {
               size="sm"
               icon={<Icon name="copy" size={14} color={palette.white} />}
               onPress={() => void copy('memo', memo)}
+              style={styles.solanaButton}
             />
             {proof.solanaSignature ? (
               <MetalButton
-                label="View on Explorer"
+                label="Explorer"
                 variant="violet"
                 size="sm"
                 icon={<Icon name="external" size={14} color={palette.white} />}
                 onPress={() => void Linking.openURL(explorerUrl(proof.solanaSignature!))}
+                style={styles.solanaButton}
               />
-            ) : (
-              <Badge label="Not yet mirrored" tone="neutral" icon="link" style={styles.notMirrored} />
-            )}
+            ) : null}
           </View>
         </Card>
 
@@ -269,7 +289,7 @@ const styles = StyleSheet.create({
   headText: { flex: 1 },
   title: { marginTop: 4 },
 
-  badges: { flexDirection: 'row', gap: space.sm, marginTop: space.lg },
+  stats: { marginTop: space.lg, paddingVertical: space.lg },
 
   notice: { marginTop: space.lg, padding: space.lg },
   noticeText: { lineHeight: 19 },
@@ -287,7 +307,6 @@ const styles = StyleSheet.create({
   withheldLabel: { marginLeft: space.md },
 
   solana: { padding: space.lg },
-  solanaNote: { lineHeight: 19 },
   memo: {
     marginTop: space.lg,
     padding: space.md,
@@ -296,8 +315,12 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: alpha.t08,
   },
-  solanaActions: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.lg },
-  notMirrored: { marginLeft: space.xs },
+  mirrorState: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  mirrorDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: alpha.t28 },
+  mirrorDotOn: { backgroundColor: palette.positive },
+  mirrorLabel: { color: alpha.t56 },
+  solanaActions: { flexDirection: 'row', gap: space.sm, marginTop: space.lg },
+  solanaButton: { flex: 1 },
 
   done: { marginTop: space['2xl'] },
 

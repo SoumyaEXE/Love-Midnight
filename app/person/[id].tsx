@@ -7,11 +7,19 @@ import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { LiquidGlass } from '@/components/glass/LiquidGlass';
 import { Avatar } from '@/components/ui/Avatar';
 import { MetalButton } from '@/components/ui/MetalButton';
-import { BandMeter, Card, Chip, IconButton, SettingRow } from '@/components/ui/primitives';
+import {
+  BandMeter,
+  Card,
+  Chip,
+  Divider,
+  IconButton,
+  SettingRow,
+  StatRow,
+} from '@/components/ui/primitives';
 import { Icon } from '@/components/icons/Icon';
 import { alpha, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
-import { explain, match } from '@/ai/matching';
+import { match, type MatchResult } from '@/ai/matching';
 import { BAND_LABEL, DISTANCE_LABEL } from '@/chain/midnight/types';
 import { maskFor, PEOPLE_BY_ID, VECTORS } from '@/data/people';
 import { useHalo } from '@/state/store';
@@ -99,7 +107,7 @@ export default function PersonScreen() {
           <LiquidGlass radius={radii.pill} style={styles.area} intensity={40} specular={0.4}>
             <Icon name="pin" size={14} color={alpha.t56} />
             <Text style={[type.caption, styles.areaLabel]}>
-              {DISTANCE_LABEL[person.bucket]} · area withheld
+              {DISTANCE_LABEL[person.bucket]} · exact position withheld
             </Text>
           </LiquidGlass>
         </View>
@@ -115,43 +123,46 @@ export default function PersonScreen() {
               <BandMeter value={result.band} />
             </View>
 
-            <Text style={[type.callout, styles.matchExplain]}>{explain(result)}</Text>
+            <StatRow
+              style={styles.matchStats}
+              items={[
+                { value: `${result.band}/4`, label: 'Band', tone: 'violet' },
+                { value: String(result.drivers.length), label: 'Signals' },
+                { value: String(result.withheld.length), label: 'Closed', tone: 'muted' },
+              ]}
+            />
 
-            <View style={styles.drivers}>
-              {result.drivers.map((driver) => (
-                <View key={driver.dimension} style={styles.driver}>
-                  <Text style={[type.captionStrong, styles.driverLabel]}>{driver.dimension}</Text>
-                  <View style={styles.driverTrack}>
-                    <View
-                      style={[
-                        styles.driverFill,
-                        {
-                          width: `${Math.min(
-                            100,
-                            (driver.contribution / (result.drivers[0]?.contribution || 1)) * 100,
-                          )}%`,
-                        },
-                      ]}
-                    />
-                  </View>
+            {/* Share of the score, not raw contribution. A bar is only worth
+                drawing if the number beside it means something on its own. */}
+            {result.drivers.length ? (
+              <>
+                <Divider style={styles.matchDivider} />
+                <View style={styles.drivers}>
+                  {result.drivers.slice(0, 4).map((driver) => (
+                    <View key={driver.dimension} style={styles.driver}>
+                      <Text style={[type.captionStrong, styles.driverLabel]} numberOfLines={1}>
+                        {driver.dimension}
+                      </Text>
+                      <View style={styles.driverTrack}>
+                        <View
+                          style={[
+                            styles.driverFill,
+                            { width: `${Math.max(6, share(result, driver.contribution))}%` },
+                          ]}
+                        />
+                      </View>
+                      <Text style={[type.digest, styles.driverValue]}>
+                        {share(result, driver.contribution)}%
+                      </Text>
+                    </View>
+                  ))}
                 </View>
-              ))}
-            </View>
-
-            {result.withheld.length > 0 ? (
-              <View style={styles.withheld}>
-                <Icon name="lock" size={13} color={alpha.t38} />
-                <Text style={[type.caption, styles.withheldLabel]}>
-                  {result.withheld.length} dimension{result.withheld.length === 1 ? '' : 's'} closed
-                  by one of you — scored as zero inside the circuit.
-                </Text>
-              </View>
+              </>
             ) : null}
 
             {result.band === 0 ? (
               <Text style={[type.caption, styles.noProof]}>
-                Not enough shared signal to prove a match. The circuit would refuse, so Halo does
-                not offer it.
+                Not enough shared signal. The circuit would refuse.
               </Text>
             ) : (
               <MetalButton
@@ -179,12 +190,12 @@ export default function PersonScreen() {
 
         {/* Safety actions */}
         <View style={[styles.section, styles.safety]}>
-          <SettingRow icon="eye-off" title="Hide user" subtitle="They stop appearing on your radar" />
-          <SettingRow icon="block" title="Block user" subtitle="No proofs will be exchanged" />
+          <SettingRow icon="eye-off" title="Hide user" subtitle="Stops appearing on your radar" />
+          <SettingRow icon="block" title="Block user" subtitle="No proofs either way" />
           <SettingRow
             icon="flag"
             title="Report user"
-            subtitle="Anonymous — bound to their personhood handle"
+            subtitle="Anonymous, bound to their handle"
             tone="negative"
           />
         </View>
@@ -203,6 +214,19 @@ export default function PersonScreen() {
       <ScrollScrim />
     </View>
   );
+}
+
+/**
+ * A driver's share of the total score, as a whole percent.
+ *
+ * Normalising against the strongest driver, which is what the bars used to
+ * do, always paints the top bar full - so every profile looked equally
+ * matched on its best dimension and the bars carried no information.
+ */
+function share(result: MatchResult, contribution: number): number {
+  const total = result.drivers.reduce((sum, d) => sum + d.contribution, 0);
+  if (total <= 0) return 0;
+  return Math.round((contribution / total) * 100);
 }
 
 const styles = StyleSheet.create({
@@ -232,12 +256,14 @@ const styles = StyleSheet.create({
   matchHead: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
   matchHeadText: { flex: 1 },
   matchTitle: { marginTop: 5 },
-  matchExplain: { marginTop: space.md, lineHeight: 20 },
+  matchStats: { marginTop: space.xl },
+  matchDivider: { marginVertical: space.lg },
 
-  drivers: { marginTop: space.lg, gap: space.md },
-  driver: { gap: 6 },
-  driverLabel: { color: alpha.t72 },
+  drivers: { gap: 10 },
+  driver: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  driverLabel: { width: 84, color: alpha.t72, textTransform: 'capitalize' },
   driverTrack: {
+    flex: 1,
     height: 4,
     borderRadius: 2,
     backgroundColor: 'rgba(255,255,255,0.07)',
@@ -248,9 +274,7 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: palette.violet,
   },
-
-  withheld: { flexDirection: 'row', alignItems: 'flex-start', marginTop: space.lg },
-  withheldLabel: { flex: 1, marginLeft: space.sm, lineHeight: 18 },
+  driverValue: { width: 34, textAlign: 'right' },
 
   proveAction: { marginTop: space.xl },
   noProof: { marginTop: space.xl, lineHeight: 18 },

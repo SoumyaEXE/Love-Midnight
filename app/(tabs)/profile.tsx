@@ -8,7 +8,15 @@ import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { LiquidGlass } from '@/components/glass/LiquidGlass';
 import { Avatar } from '@/components/ui/Avatar';
 import { MetalButton } from '@/components/ui/MetalButton';
-import { Badge, Card, Chip, Divider, SectionLabel, SettingRow } from '@/components/ui/primitives';
+import {
+  Badge,
+  Card,
+  Chip,
+  Divider,
+  SectionLabel,
+  SettingRow,
+  StatRow,
+} from '@/components/ui/primitives';
 import { Icon } from '@/components/icons/Icon';
 import { alpha, layout, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
@@ -90,6 +98,21 @@ export default function ProfileScreen() {
           </View>
         </View>
 
+        {/* The account in three figures. Everything here was already on the
+            screen as prose somewhere further down; read as numbers it takes
+            a glance instead of a paragraph. */}
+        <View style={styles.section}>
+          <Card radius={radii.card} style={styles.heroStats}>
+            <StatRow
+              items={[
+                { value: String(proofs.length), label: 'Proofs', tone: 'violet' },
+                { value: `${openDimensions}/${DIMENSIONS.length}`, label: 'Open axes' },
+                { value: `${shownFields.length}/${SHOWABLE.length}`, label: 'Fields shown' },
+              ]}
+            />
+          </Card>
+        </View>
+
         {/* Your card, exactly as a peer sees it. The disclosure toggles are
             abstract until you can look at their result. */}
         <SectionLabel>Your card</SectionLabel>
@@ -113,7 +136,7 @@ export default function ProfileScreen() {
                   </View>
                 ) : profile.interests.length ? (
                   <Text style={[type.caption, styles.cardMuted]}>
-                    {profile.interests.length} interests hidden — still scored, never listed.
+                    {profile.interests.length} interests hidden. Still scored.
                   </Text>
                 ) : null}
 
@@ -128,7 +151,7 @@ export default function ProfileScreen() {
               </>
             ) : (
               <Text style={[type.callout, styles.cardMuted]}>
-                You have not filled in a profile yet. Matching runs on a placeholder until you do.
+                No profile yet. Matching runs on a placeholder.
               </Text>
             )}
           </Card>
@@ -136,7 +159,7 @@ export default function ProfileScreen() {
           <SettingRow
             icon="person"
             title={hasProfile ? 'Edit profile' : 'Set up your profile'}
-            subtitle="Answers, interests, and what each person can see"
+            subtitle="Answers, interests, and what you show"
             onPress={() => router.push('/profile-edit')}
           />
 
@@ -147,7 +170,7 @@ export default function ProfileScreen() {
                 {truncate(profileCommit, 10, 8)}
               </Text>
               <Text style={[type.caption, styles.commitNote]}>
-                On Midnight. Covers your answers and the list above — change either and it moves.
+                On Midnight. Covers your answers and what you show.
               </Text>
             </Card>
           ) : null}
@@ -169,7 +192,7 @@ export default function ProfileScreen() {
                 </Text>
                 <Text style={[type.caption, styles.walletSub]} numberOfLines={1}>
                   {wallet.status === 'connected'
-                    ? 'Signs pairing handshakes. Never sees your position.'
+                    ? 'Signs handshakes. Never sees your position.'
                     : 'Connect to publish commitments on Midnight.'}
                 </Text>
               </View>
@@ -210,13 +233,17 @@ export default function ProfileScreen() {
         <View style={styles.section}>
           <Card radius={radii.card}>
             <Text style={[type.callout, styles.explainer]}>
-              Halo scores you on {DIMENSIONS.length} dimensions, on this device. A dimension you
-              close is multiplied by zero inside the circuit — the proof shows it could not have
-              influenced a match, rather than promising it did not.
+              A closed dimension is multiplied by zero inside the circuit.
             </Text>
-            <Text style={[type.numeric, styles.count]}>
-              {openDimensions} of {DIMENSIONS.length} open
-            </Text>
+
+            <StatRow
+              style={styles.dimensionStats}
+              items={[
+                { value: String(openDimensions), label: 'Open', tone: 'violet' },
+                { value: String(DIMENSIONS.length - openDimensions), label: 'Closed', tone: 'muted' },
+                { value: String(DIMENSIONS.length), label: 'Axes' },
+              ]}
+            />
 
             <Divider style={styles.divider} />
 
@@ -240,7 +267,7 @@ export default function ProfileScreen() {
                 {truncate(vectorCommit, 10, 8)}
               </Text>
               <Text style={[type.caption, styles.commitNote]}>
-                Published. Binds you to one vector without revealing it.
+                Binds you to one vector without revealing it.
               </Text>
             </Card>
           ) : null}
@@ -252,7 +279,7 @@ export default function ProfileScreen() {
           {proofs.length === 0 ? (
             <Card radius={radii.lg}>
               <Text style={[type.callout, styles.empty]}>
-                No proofs yet. Wink at someone on the radar to run the proximity circuit.
+                No proofs yet. Wink at someone to run the first circuit.
               </Text>
             </Card>
           ) : (
@@ -370,7 +397,8 @@ const styles = StyleSheet.create({
   walletError: { marginTop: space.sm, color: palette.negative },
 
   explainer: { lineHeight: 20 },
-  count: { marginTop: space.md, color: palette.violet },
+  heroStats: { marginTop: space.xl, paddingVertical: space.lg },
+  dimensionStats: { marginTop: space.lg },
   divider: { marginVertical: space.lg },
 
   dimensions: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },

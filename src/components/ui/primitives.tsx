@@ -448,6 +448,61 @@ export function Divider({ style }: { style?: StyleProp<ViewStyle> }) {
   return <View style={[styles.divider, style]} />;
 }
 
+// -----------------------------------------------------------------------------
+// Stats
+// -----------------------------------------------------------------------------
+
+export type Stat = {
+  value: string;
+  label: string;
+  tone?: 'default' | 'violet' | 'positive' | 'muted';
+};
+
+/**
+ * A row of figures.
+ *
+ * Most of what these cards had to say was already a number - a band out of
+ * four, a proving time, a count of open dimensions - and it was being spent as
+ * prose, which is the slowest possible way to read a number. A stat strip says
+ * the same thing in a glance and, more usefully, invites comparison: three
+ * figures side by side make it obvious which one is the outlier.
+ *
+ * Values are set in tabular figures so a column does not shimmy when a digit
+ * changes, and each cell is `flex: 1` so the dividers land on a regular rhythm
+ * regardless of how long the labels are.
+ */
+export function StatRow({ items, style }: { items: Stat[]; style?: StyleProp<ViewStyle> }) {
+  const tint = {
+    default: palette.white,
+    violet: palette.violet,
+    positive: palette.positive,
+    muted: alpha.t56,
+  };
+
+  return (
+    <View style={[styles.stats, style]}>
+      {items.map((item, index) => (
+        <React.Fragment key={item.label}>
+          {index > 0 ? <View style={styles.statDivider} /> : null}
+          <View style={styles.stat}>
+            <Text
+              style={[type.statValue, { color: tint[item.tone ?? 'default'] }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              {item.value}
+            </Text>
+            <Text style={[type.micro, styles.statLabel]} numberOfLines={1}>
+              {item.label}
+            </Text>
+          </View>
+        </React.Fragment>
+      ))}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   card: {
     overflow: 'hidden',
@@ -565,6 +620,11 @@ const styles = StyleSheet.create({
     borderColor: border.specular,
   },
   badgeMetalLabel: { color: palette.white },
+
+  stats: { flexDirection: 'row', alignItems: 'stretch' },
+  stat: { flex: 1, alignItems: 'center', paddingVertical: 2 },
+  statDivider: { width: StyleSheet.hairlineWidth, backgroundColor: alpha.t10 },
+  statLabel: { marginTop: 3, letterSpacing: 0.9, textTransform: 'uppercase' },
 
   iconButton: {
     alignItems: 'center',

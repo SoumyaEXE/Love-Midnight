@@ -147,7 +147,7 @@ export default function ProfileEditScreen() {
                   <Icon name="check" size={14} color={palette.positive} />
                 </View>
                 <Text style={[type.callout, styles.savedLabel]}>
-                  Saved on chain — committed on Midnight, receipt ready for Solana.
+                  Saved on chain. Committed on Midnight, receipt ready for Solana.
                 </Text>
               </Animated.View>
             ) : null}

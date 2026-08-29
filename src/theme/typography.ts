@@ -154,6 +154,19 @@ export const type = StyleSheet.create({
     color: text.primary,
     ...tabular,
   },
+  /**
+   * The figure in a stat cell. Light rather than medium: at 22px a medium
+   * weight competes with the card title above it, and the number should read as
+   * a reading taken off an instrument, not as a heading.
+   */
+  statValue: {
+    fontFamily: fontFamily.light,
+    fontSize: 22,
+    lineHeight: 26,
+    letterSpacing: -0.6,
+    color: text.primary,
+    ...tabular,
+  },
 });
 
 /** Font map handed to `useFonts` in the root layout. */

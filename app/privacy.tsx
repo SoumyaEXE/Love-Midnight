@@ -137,8 +137,7 @@ export default function PrivacyScreen() {
               <View style={styles.switchText}>
                 <Text style={type.body}>Mirror match receipts to Solana</Text>
                 <Text style={[type.caption, styles.sub]}>
-                  Publishes the nullifier and the band as a memo. Carries nothing that identifies
-                  either of you, and makes the match usable by other Solana programs.
+                  A memo carrying the nullifier and the band. Nothing identifying.
                 </Text>
               </View>
               <Switch
@@ -160,7 +159,7 @@ export default function PrivacyScreen() {
           <SettingRow
             icon="phone"
             title="Call permissions"
-            subtitle={allowCalls ? 'Allowed after a fresh adulthood proof' : 'Calls disabled for everyone'}
+            subtitle={allowCalls ? 'After a fresh adulthood proof' : 'Disabled for everyone'}
             right={
               <Switch
                 value={allowCalls}
@@ -176,7 +175,7 @@ export default function PrivacyScreen() {
           <SettingRow
             icon="flag"
             title="Reports you have filed"
-            subtitle={`${FILED_REPORTS.length} report${FILED_REPORTS.length === 1 ? '' : 's'}, bound to personhood handles`}
+            subtitle={`${FILED_REPORTS.length} report${FILED_REPORTS.length === 1 ? '' : 's'}, bound to handles`}
             tone="negative"
             onPress={() => setOpenReport(FILED_REPORTS[0] ?? null)}
           />
@@ -186,9 +185,8 @@ export default function PrivacyScreen() {
         <View style={styles.section}>
           <Card radius={radii.card}>
             <Text style={[type.callout, styles.explainer]}>
-              Halo holds no coordinates, no interest vector, and no date of birth on any server.
-              Resetting destroys the seed in this device’s keystore — every commitment you have
-              published becomes permanently unopenable, including your match history.
+              Resetting destroys the seed in this device’s keystore. Every commitment you
+              have published becomes permanently unopenable.
             </Text>
             <MetalButton
               label="Reset identity"

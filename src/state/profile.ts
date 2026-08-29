@@ -51,7 +51,7 @@ export const SHOWABLE_COPY: Record<ShowableField, { title: string; on: string; o
   interests: {
     title: 'Interests',
     on: 'Your tags are listed',
-    off: 'Tags hidden — matching still works',
+    off: 'Tags hidden, still scored',
   },
   area: {
     title: 'Distance',
