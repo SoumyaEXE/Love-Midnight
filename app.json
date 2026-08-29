@@ -66,7 +66,8 @@
       "solanaCluster": "https://api.devnet.solana.com",
       "solanaProgram": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
       "cartoApiBase": "https://gcp-us-east1.api.carto.com",
-      "cartoBasemap": "dark_all"
+      "cartoBasemap": "dark_all",
+      "cartoBasemapKey": "cb1_2j57_1_8b63520ddf7c032cbb51d04a"
     }
   }
 }

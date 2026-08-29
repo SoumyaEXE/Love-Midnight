@@ -32,6 +32,7 @@ import Constants from 'expo-constants';
 
 type Extra = {
   cartoBasemap?: string;
+  cartoBasemapKey?: string;
   cartoApiBase?: string;
 };
 
@@ -44,8 +45,13 @@ export const mapConfig = {
   /**
    * Basemap key. Empty means unkeyed, which means watermarked tiles - the app
    * still works, it just looks like a trial.
+   *
+   * Committed in app.json on purpose: it is public by construction, and a
+   * clone that renders watermarked tiles until someone is told about a .env is
+   * a worse failure than a checked-in token that was always going to be
+   * visible in the bundle. The env var wins, so rotating it is a .env edit.
    */
-  basemapKey: process.env.EXPO_PUBLIC_CARTO_API_KEY ?? '',
+  basemapKey: process.env.EXPO_PUBLIC_CARTO_API_KEY || extra.cartoBasemapKey || '',
   basemap: (extra.cartoBasemap ?? 'dark_all') as CartoBasemap,
   /** Maps API v3 base. Unused by the basemap; see the note above. */
   apiBaseUrl: extra.cartoApiBase ?? 'https://gcp-us-east1.api.carto.com',
