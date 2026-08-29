@@ -59,6 +59,7 @@ export type IconName =
   | 'external'
   | 'refresh'
   | 'fingerprint'
+  | 'verified'
   | 'cube';
 
 export type IconProps = {
@@ -399,6 +400,26 @@ function glyph(name: IconName, color: string, sw: number): React.ReactNode {
           <Path d="M11.25 10.5a.75.75 0 011.5 0c0 3.6-.8 7-2.25 10" />
           <Path d="M6.5 13.5a19 19 0 01-.5 4.25" />
         </>
+      );
+
+    /**
+     * The verification seal.
+     *
+     * The only solid glyph in an otherwise stroked set, and deliberately so: a
+     * seal is a stamp, not a diagram, and the scalloped rosette is the shape
+     * people already read as *verified* without being told. Drawn as one path
+     * with the tick as a second, closed subpath knocked out under evenodd, so
+     * it stays crisp at 12px where a stroked rosette turns to mush.
+     */
+    case 'verified':
+      return (
+        <Path
+          d="M12 3.45 Q15.04.65 16.27 4.6 Q20.31 3.69 19.4 7.72 Q23.35 8.96 20.55 12 Q23.35 15.04 19.4 16.27 Q20.31 20.31 16.27 19.4 Q15.04 23.35 12 20.55 Q8.96 23.35 7.73 19.4 Q3.69 20.31 4.6 16.28 Q.65 15.04 3.45 12 Q.65 8.96 4.6 7.72 Q3.69 3.69 7.72 4.6 Q8.96.65 12 3.45Z M10.85 15.44 L7.82 12.41 L9.21 11.02 L10.85 12.66 L14.79 8.72 L16.18 10.11 Z"
+          fill={color}
+          fillRule="evenodd"
+          clipRule="evenodd"
+          stroke="none"
+        />
       );
 
     case 'cube':

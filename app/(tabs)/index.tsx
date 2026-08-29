@@ -234,8 +234,8 @@ export default function HomeScreen() {
                 </Text>
                 <Badge
                   label={`Proved ${DISTANCE_LABEL[entry.bucket].toLowerCase()}`}
-                  tone="violet"
-                  icon="shield-check"
+                  tone="metal"
+                  icon="verified"
                   style={styles.rowBadge}
                 />
               </View>

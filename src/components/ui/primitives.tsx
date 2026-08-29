@@ -17,7 +17,16 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { alpha, border, motion, palette, radius as radii, shadow, space } from '@/theme/tokens';
+import {
+  alpha,
+  border,
+  metal,
+  motion,
+  palette,
+  radius as radii,
+  shadow,
+  space,
+} from '@/theme/tokens';
 import { type } from '@/theme/typography';
 import { Icon, type IconName } from '@/components/icons/Icon';
 
@@ -281,8 +290,17 @@ export function SettingRow({
 // -----------------------------------------------------------------------------
 
 /**
- * Small status pill. `tone` maps to the three states the app ever reports:
- * proved (violet), live (green), and simulated (neutral).
+ * Small status pill. `tone` maps to the states the app reports: proved
+ * (violet), live (green), simulated (neutral), and `metal` for a claim that has
+ * actually been verified by a proof.
+ *
+ * `metal` is not a fifth colour, it is a different *material*. A flat violet
+ * wash with a stroked shield next to it looked like every other tinted chip on
+ * the screen, which is exactly wrong for the one label that is backed by a
+ * circuit rather than by a preference. Giving it the brushed face and top-lit
+ * lip the buttons use makes it read as something struck rather than styled,
+ * and it is the only element on a card carrying that treatment - so it is the
+ * thing the eye lands on.
  */
 export function Badge({
   label,
@@ -291,10 +309,34 @@ export function Badge({
   style,
 }: {
   label: string;
-  tone?: 'neutral' | 'violet' | 'positive' | 'negative';
+  tone?: 'neutral' | 'violet' | 'positive' | 'negative' | 'metal';
   icon?: IconName;
   style?: StyleProp<ViewStyle>;
 }) {
+  if (tone === 'metal') {
+    return (
+      <View style={[styles.badge, styles.badgeMetal, style]}>
+        <LinearGradient
+          colors={metal.face}
+          locations={metal.faceLocations}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
+        {/* Light enters from the top, the same as every raised face in the app. */}
+        <LinearGradient
+          colors={['rgba(255,255,255,0.26)', 'rgba(255,255,255,0)']}
+          style={styles.badgeLip}
+          pointerEvents="none"
+        />
+        {icon ? (
+          <Icon name={icon} size={13} color="#EBD9FF" style={{ marginRight: 5 }} />
+        ) : null}
+        <Text style={[type.micro, styles.badgeMetalLabel]}>{label}</Text>
+        <View style={styles.badgeRim} pointerEvents="none" />
+      </View>
+    );
+  }
+
   const tint = {
     neutral: alpha.t56,
     violet: palette.violet,
@@ -500,6 +542,29 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     borderWidth: StyleSheet.hairlineWidth,
   },
+  badgeMetal: {
+    paddingHorizontal: 11,
+    paddingVertical: 5,
+    borderWidth: 0,
+    overflow: 'hidden',
+    ...shadow.lift,
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  /** Half-height gloss. Any taller and the face reads as plastic. */
+  badgeLip: { position: 'absolute', top: 0, left: 0, right: 0, height: 11 },
+  badgeRim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: radii.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: border.specular,
+  },
+  badgeMetalLabel: { color: palette.white },
 
   iconButton: {
     alignItems: 'center',

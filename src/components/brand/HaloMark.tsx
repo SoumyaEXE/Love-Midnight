@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,7 +19,19 @@ import { palette } from '@/theme/tokens';
 
 const SEED = 'halo-midnight';
 
-export function haloMarkUrl(size: number): string {
+/**
+ * One plate resolution for every rendered size.
+ *
+ * This used to scale with the display size, which quietly made the mark a
+ * *different URL* at every size it was drawn at - so a 44px header mark and a
+ * 92px hero mark were two separate downloads and two separate cache entries,
+ * and changing size mid-screen dropped back to an empty disc for as long as the
+ * new one took to arrive. One URL means one fetch, cached for the app's life.
+ * 384px covers every size the app draws at 3x.
+ */
+const PLATE_PX = 384;
+
+export function haloMarkUrl(size: number = PLATE_PX): string {
   // set1 is the robot set. `bgset` is deliberately omitted: the plate arrives
   // with a transparent background and sits on the violet disc below it, which
   // is what makes it look placed rather than pasted.
@@ -34,6 +46,14 @@ export function HaloMark({
   style?: StyleProp<ViewStyle>;
 }) {
   const inset = Math.round(size * 0.12);
+  /**
+   * Robohash is a third-party CDN, so the plate can simply not arrive - on a
+   * cold launch offline, or behind a captive portal. Falling back to the bare
+   * disc would put the app back to the featureless circle this mark replaced,
+   * so a drawn halo stands in. It needs no network and is on-brand enough that
+   * most people will never notice which one they got.
+   */
+  const [failed, setFailed] = useState(false);
 
   return (
     <View
@@ -62,14 +82,27 @@ export function HaloMark({
         pointerEvents="none"
       />
 
-      <Image
-        source={{ uri: haloMarkUrl(Math.round(size * 3)) }}
-        style={{ width: size - inset * 2, height: size - inset * 2 }}
-        contentFit="contain"
-        transition={260}
-        cachePolicy="memory-disk"
-        accessibilityLabel="Halo"
-      />
+      {failed ? (
+        <View
+          style={{
+            width: size * 0.5,
+            height: size * 0.5,
+            borderRadius: size * 0.25,
+            borderWidth: Math.max(1.5, size * 0.055),
+            borderColor: 'rgba(255,255,255,0.92)',
+          }}
+        />
+      ) : (
+        <Image
+          source={{ uri: haloMarkUrl() }}
+          style={{ width: size - inset * 2, height: size - inset * 2 }}
+          contentFit="contain"
+          transition={260}
+          cachePolicy="memory-disk"
+          onError={() => setFailed(true)}
+          accessibilityLabel="Halo"
+        />
+      )}
 
       <View style={[styles.ring, { borderRadius: size / 2 }]} pointerEvents="none" />
     </View>

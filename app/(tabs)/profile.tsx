@@ -81,7 +81,7 @@ export default function ProfileScreen() {
             </Text>
           ) : null}
           <View style={styles.heroBadges}>
-            <Badge label="Adult, proved" tone="violet" icon="shield-check" />
+            <Badge label="Adult, proved" tone="metal" icon="verified" />
             <Badge
               label={liveProver ? 'Live prover' : 'Local prover'}
               tone={liveProver ? 'positive' : 'neutral'}

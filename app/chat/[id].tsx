@@ -1,6 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
 import {
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -17,6 +16,7 @@ import { GlowBackdrop } from '@/components/ui/GlowBackdrop';
 import { LiquidGlass } from '@/components/glass/LiquidGlass';
 import { Avatar } from '@/components/ui/Avatar';
 import { IconButton } from '@/components/ui/primitives';
+import { useKeyboardInset } from '@/components/ui/keyboard';
 import { Icon } from '@/components/icons/Icon';
 import { alpha, palette, radius as radii, shadow, space } from '@/theme/tokens';
 import { fontFamily, type } from '@/theme/typography';
@@ -25,10 +25,14 @@ import { PEOPLE_BY_ID, THREADS, type Message } from '@/data/people';
 /**
  * Conversation.
  *
- * The call-permission banner from the comps is kept because it is the clearest
- * example of Halo's consent model in an ordinary place: escalating to voice
- * requires a fresh `attestAdult` proof from both sides, so the capability is
- * gated by a circuit rather than by a server-side flag.
+ * The call-permission banner from the comps is parked - see the commented
+ * block below the thread for what it was and why it is not on screen.
+ *
+ * The composer tracks the keyboard through `useKeyboardInset` rather than a
+ * `KeyboardAvoidingView`. That component leans on the window resizing under
+ * Android's `adjustResize`, which stops happening once an app goes edge-to-edge
+ * as this one does - so the field it is meant to lift ends up underneath the
+ * keys, which is exactly where a message composer must never be.
  */
 export default function ConversationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -39,6 +43,9 @@ export default function ConversationScreen() {
   const person = id ? PEOPLE_BY_ID.get(id) : null;
   const [messages, setMessages] = useState<Message[]>(() => (id ? THREADS[id] ?? [] : []));
   const [draft, setDraft] = useState('');
+  // The composer already pads by the safe-area inset, so the keyboard only
+  // owes the difference.
+  const keyboardInset = useKeyboardInset(insets.bottom);
 
   const send = useCallback(() => {
     const body = draft.trim();
@@ -84,16 +91,16 @@ export default function ConversationScreen() {
         </View>
       </View>
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={insets.top + 56}
-      >
+      <Animated.View style={[styles.flex, keyboardInset]}>
         <ScrollView
           ref={scrollRef}
           contentContainerStyle={styles.thread}
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}
+          // The keyboard shrinks this view from the bottom, and a shrinking
+          // scroll view keeps its offset - so without this the last message
+          // slides out of sight the moment someone taps the composer.
+          onLayout={() => scrollRef.current?.scrollToEnd({ animated: false })}
         >
           <Text style={[type.micro, styles.day]}>
             Today, {new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
@@ -134,7 +141,15 @@ export default function ConversationScreen() {
           ))}
         </ScrollView>
 
-        {/* Call permission. Gated by a circuit, not a flag. */}
+        {/* Call permission, parked.
+
+            It is the clearest illustration of the consent model in an ordinary
+            place - escalating to voice needs a fresh `attestAdult` from both
+            sides, so the capability is gated by a circuit rather than by a
+            server flag - but it sits between the thread and the composer with
+            nothing behind it, and a banner that cannot be actioned or
+            dismissed is furniture. Restore it when the call flow exists.
+
         <View style={styles.bannerWrap}>
           <LiquidGlass radius={radii.lg} style={styles.banner} intensity={50}>
             <Icon name="phone" size={19} color={alpha.t72} />
@@ -147,6 +162,7 @@ export default function ConversationScreen() {
             <Icon name="chevron-right" size={18} color={alpha.t38} />
           </LiquidGlass>
         </View>
+        */}
 
         <View style={[styles.composerWrap, { paddingBottom: insets.bottom + space.md }]}>
           <View style={styles.composer}>
@@ -172,7 +188,7 @@ export default function ConversationScreen() {
             <Icon name="arrow-right" size={20} color={palette.void} />
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </Animated.View>
     </View>
   );
 }

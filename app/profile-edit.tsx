@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeIn } from 'react-native-reanimated';
@@ -7,6 +7,7 @@ import { GlowBackdrop } from '@/components/ui/GlowBackdrop';
 import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { Card, ScreenHeader, SectionLabel } from '@/components/ui/primitives';
 import { MetalButton } from '@/components/ui/MetalButton';
+import { useKeyboardInset } from '@/components/ui/keyboard';
 import {
   BioSection,
   CardSection,
@@ -43,6 +44,7 @@ export default function ProfileEditScreen() {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+  const keyboardInset = useKeyboardInset(insets.bottom);
 
   const save = useCallback(async () => {
     if (!isComplete(profile)) {
@@ -79,10 +81,7 @@ export default function ProfileEditScreen() {
     <View style={styles.root}>
       <GlowBackdrop intensity={0.7} origin={1.15} />
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <Animated.View style={[styles.flex, keyboardInset]}>
         <ScrollView
           contentContainerStyle={{
             paddingTop: insets.top + space.sm,
@@ -164,7 +163,7 @@ export default function ProfileEditScreen() {
             />
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </Animated.View>
 
       <ScrollScrim />
     </View>
