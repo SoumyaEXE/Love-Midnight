@@ -106,11 +106,11 @@ export function isComplete(profile: HaloProfile): boolean {
 /** Per-field validation, so the form can point at the field that is wrong. */
 export function problems(profile: HaloProfile): Partial<Record<keyof HaloProfile, string>> {
   const found: Partial<Record<keyof HaloProfile, string>> = {};
-  if (profile.name.trim().length < 2) found.name = 'Enter a name people can call you';
-  if (profile.age === null) found.age = 'Enter your age';
-  else if (profile.age < 18) found.age = 'Halo is 18+';
-  else if (profile.age > 120) found.age = 'Enter a real age';
-  if (profile.interests.length === 0) found.interests = 'Pick at least one interest';
+  if (profile.name.trim().length < 2) found.name = 'Add your name';
+  if (profile.age === null) found.age = 'Required';
+  else if (profile.age < 18) found.age = '18+ only';
+  else if (profile.age > 120) found.age = 'Check that';
+  if (profile.interests.length === 0) found.interests = 'Pick at least one';
   return found;
 }
 

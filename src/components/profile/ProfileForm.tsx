@@ -1,8 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Segmented, TextField, ToggleRow } from '@/components/ui/Field';
-import { Divider } from '@/components/ui/primitives';
 import { Icon } from '@/components/icons/Icon';
 import { alpha, palette, radius as radii, space } from '@/theme/tokens';
 import { fontFamily, type } from '@/theme/typography';
@@ -17,20 +16,33 @@ import {
 } from '@/state/profile';
 
 /**
- * The profile form, in three sections.
+ * The profile form, in five small sections.
  *
- * Split rather than one long page because they are three different questions:
- * who you are, what you like, and who gets to see it. Onboarding walks them in
- * order; the editor shows all three at once. Both use these same components, so
- * there is one implementation of "what a Halo profile is" rather than two that
- * drift.
+ * Deliberately five rather than three. The earlier split - about / interests /
+ * disclosure - matched how the data is *organised*, not how it is answered: the
+ * "about" card carried four controls and the disclosure card carried
+ * twenty-two, so a step could run past two screen-heights and the button that
+ * ends it sat somewhere below the fold. A form you have to scroll to submit
+ * reads as a chore no matter how good the controls are.
+ *
+ * So each section is now one decision, sized to fit above the fold with its
+ * button:
+ *
+ *   IdentitySection   name, age, gender
+ *   BioSection        one paragraph
+ *   InterestsSection  one category at a time, not all sixteen stacked
+ *   CardSection       what appears on your card
+ *   ScoringSection    what the matcher may score
+ *
+ * Copy is kept to labels. The explanation of *why* Halo asks belongs on the
+ * step around the form, once, not repeated as a hint under every field.
  */
 
 // -----------------------------------------------------------------------------
-// About
+// Identity
 // -----------------------------------------------------------------------------
 
-export function AboutSection({
+export function IdentitySection({
   profile,
   onChange,
   showErrors = false,
@@ -43,51 +55,70 @@ export function AboutSection({
 
   return (
     <View>
-      <TextField
-        label="Name"
-        value={profile.name}
-        onChangeText={(name) => onChange({ name })}
-        placeholder="What people call you"
-        autoCapitalize="words"
-        autoComplete="name"
-        maxLength={32}
-        returnKeyType="next"
-        error={found.name}
-      />
-
-      <TextField
-        label="Age"
-        value={profile.age === null ? '' : String(profile.age)}
-        onChangeText={(text) => {
-          const digits = text.replace(/[^0-9]/g, '').slice(0, 3);
-          onChange({ age: digits.length ? Number(digits) : null });
-        }}
-        placeholder="18"
-        keyboardType="number-pad"
-        maxLength={3}
-        error={found.age}
-        // Said here rather than in a policy: the number is entered, but the
-        // number is not what gets published.
-        hint="Committed on device. Peers see the 18+ proof, not the figure — unless you show it below."
-      />
+      {/* Paired on one row because they are both short answers, and stacking
+          two 48px wells with their labels costs a third of the card for no
+          gain in legibility. */}
+      <View style={styles.row}>
+        <TextField
+          label="Name"
+          value={profile.name}
+          onChangeText={(name) => onChange({ name })}
+          placeholder="Your name"
+          autoCapitalize="words"
+          autoComplete="name"
+          maxLength={32}
+          returnKeyType="next"
+          error={found.name}
+          style={styles.rowGrow}
+        />
+        <TextField
+          label="Age"
+          value={profile.age === null ? '' : String(profile.age)}
+          onChangeText={(text) => {
+            const digits = text.replace(/[^0-9]/g, '').slice(0, 3);
+            onChange({ age: digits.length ? Number(digits) : null });
+          }}
+          placeholder="18"
+          keyboardType="number-pad"
+          maxLength={3}
+          error={found.age}
+          style={styles.rowAge}
+        />
+      </View>
 
       <Segmented
         label="Gender"
         options={GENDERS.map((g) => ({ value: g, label: GENDER_LABEL[g] }))}
         value={profile.gender}
         onChange={(gender) => onChange({ gender })}
-      />
-
-      <TextField
-        label="Bio"
-        value={profile.bio}
-        onChangeText={(bio) => onChange({ bio })}
-        placeholder="What you are into, in a sentence or two."
-        maxLength={280}
-        tall
-        hint={`${profile.bio.length}/280 · your words are what the matcher reads`}
+        style={styles.last}
       />
     </View>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Bio
+// -----------------------------------------------------------------------------
+
+export function BioSection({
+  profile,
+  onChange,
+}: {
+  profile: HaloProfile;
+  onChange: (next: Partial<HaloProfile>) => void;
+}) {
+  return (
+    <TextField
+      label="Bio"
+      value={profile.bio}
+      onChangeText={(bio) => onChange({ bio })}
+      placeholder="A sentence or two."
+      maxLength={280}
+      tall
+      hint={profile.bio.length + '/280'}
+      style={styles.last}
+    />
   );
 }
 
@@ -124,6 +155,14 @@ const SUGGESTED: { dimension: Dimension; tags: string[] }[] = [
 
 const MAX_TAGS = 12;
 
+/**
+ * One category at a time.
+ *
+ * Sixteen groups stacked was roughly 1,400px of chips - the user scrolled past
+ * fourteen categories they did not care about to reach the two they did. A rail
+ * turns that into a horizontal flick, and a dot on each category that has picks
+ * means nothing chosen ever becomes invisible just because the rail moved on.
+ */
 export function InterestsSection({
   profile,
   onChange,
@@ -133,9 +172,21 @@ export function InterestsSection({
   onChange: (next: Partial<HaloProfile>) => void;
   showErrors?: boolean;
 }) {
+  const [active, setActive] = useState<Dimension>(SUGGESTED[0].dimension);
   const [draft, setDraft] = useState('');
   const chosen = useMemo(() => new Set(profile.interests), [profile.interests]);
   const found = showErrors ? problems(profile) : {};
+  const full = profile.interests.length >= MAX_TAGS;
+
+  const counts = useMemo(() => {
+    const map: Partial<Record<Dimension, number>> = {};
+    for (const group of SUGGESTED) {
+      map[group.dimension] = group.tags.filter((t) => chosen.has(t)).length;
+    }
+    return map;
+  }, [chosen]);
+
+  const group = SUGGESTED.find((g) => g.dimension === active) ?? SUGGESTED[0];
 
   const toggle = useCallback(
     (tag: string) => {
@@ -165,37 +216,62 @@ export function InterestsSection({
     <View>
       <View style={styles.tagHead}>
         <Text style={[type.caption, styles.tagCount]}>
-          {profile.interests.length} of {MAX_TAGS} chosen
+          {profile.interests.length} / {MAX_TAGS}
         </Text>
         {found.interests ? (
           <Text style={[type.caption, styles.tagError]}>{found.interests}</Text>
+        ) : full ? (
+          <Text style={[type.caption, styles.tagCount]}>Full</Text>
         ) : null}
       </View>
 
-      {SUGGESTED.map((group) => (
-        <View key={group.dimension} style={styles.group}>
-          <Text style={[type.micro, styles.groupLabel]}>{group.dimension.toUpperCase()}</Text>
-          <View style={styles.tags}>
-            {group.tags.map((tag) => {
-              const on = chosen.has(tag);
-              return (
-                <Pressable
-                  key={tag}
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: on }}
-                  accessibilityLabel={tag}
-                  onPress={() => toggle(tag)}
-                  style={[styles.tag, on && styles.tagOn]}
-                >
-                  <Text style={[type.caption, styles.tagLabel, on && styles.tagLabelOn]}>
-                    {tag}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-      ))}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.rail}
+        style={styles.railClip}
+      >
+        {SUGGESTED.map((g) => {
+          const on = g.dimension === active;
+          const count = counts[g.dimension] ?? 0;
+          return (
+            <Pressable
+              key={g.dimension}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={g.dimension}
+              onPress={() => {
+                void Haptics.selectionAsync();
+                setActive(g.dimension);
+              }}
+              style={[styles.railItem, on && styles.railItemOn]}
+            >
+              <Text style={[type.caption, styles.railLabel, on && styles.railLabelOn]}>
+                {g.dimension}
+              </Text>
+              {count ? <View style={styles.railDot} /> : null}
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      <View style={styles.tags}>
+        {group.tags.map((tag) => {
+          const on = chosen.has(tag);
+          return (
+            <Pressable
+              key={tag}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: on, disabled: !on && full }}
+              accessibilityLabel={tag}
+              onPress={() => toggle(tag)}
+              style={[styles.tag, on && styles.tagOn, !on && full && styles.tagMuted]}
+            >
+              <Text style={[type.caption, styles.tagLabel, on && styles.tagLabelOn]}>{tag}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
 
       {/* Anything the suggestions missed. Free text still runs through the
           vectoriser, so an unrecognised word is stored and shown but scores
@@ -229,7 +305,7 @@ export function InterestsSection({
             <Pressable
               key={tag}
               accessibilityRole="button"
-              accessibilityLabel={`Remove ${tag}`}
+              accessibilityLabel={'Remove ' + tag}
               onPress={() => toggle(tag)}
               style={[styles.tag, styles.tagOn]}
             >
@@ -244,61 +320,92 @@ export function InterestsSection({
 }
 
 // -----------------------------------------------------------------------------
-// What you show
+// What appears on your card
 // -----------------------------------------------------------------------------
 
-export function DisclosureSection({
+export function CardSection({
   profile,
   onChange,
-  mask,
-  onToggleDimension,
 }: {
   profile: HaloProfile;
   onChange: (next: Partial<HaloProfile>) => void;
+}) {
+  return (
+    <View>
+      <View style={styles.always}>
+        <Text style={type.body}>Name</Text>
+        <Text style={[type.caption, styles.alwaysNote]}>Always</Text>
+      </View>
+      {SHOWABLE.map((field) => (
+        <ToggleRow
+          key={field}
+          title={SHOWABLE_COPY[field].title}
+          on={profile.show[field]}
+          onChange={(next) => onChange({ show: { ...profile.show, [field]: next } })}
+        />
+      ))}
+    </View>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// What the matcher may score
+// -----------------------------------------------------------------------------
+
+/**
+ * Chips rather than sixteen switches.
+ *
+ * A switch row is the right control for the six card fields, where each one has
+ * a consequence worth naming. It is the wrong control for sixteen dimensions
+ * that all mean the same thing - in or out - because the answer is a *set*, and
+ * a set is read faster as filled versus outlined than as sixteen switch
+ * positions the eye has to walk down.
+ */
+export function ScoringSection({
+  mask,
+  onToggleDimension,
+}: {
   /** Per-dimension consent, index-aligned with DIMENSIONS. */
   mask: number[];
   onToggleDimension: (dimension: Dimension) => void;
 }) {
+  const open = mask.filter(Boolean).length;
+
   return (
     <View>
-      <Text style={[type.micro, styles.groupLabel]}>ON YOUR CARD</Text>
-      <View style={styles.rows}>
-        <View style={styles.always}>
-          <Text style={type.body}>Name</Text>
-          <Text style={[type.caption, styles.alwaysNote]}>Always shown</Text>
-        </View>
-        {SHOWABLE.map((field) => (
-          <ToggleRow
-            key={field}
-            title={SHOWABLE_COPY[field].title}
-            on={profile.show[field]}
-            onLabel={SHOWABLE_COPY[field].on}
-            offLabel={SHOWABLE_COPY[field].off}
-            onChange={(next) => onChange({ show: { ...profile.show, [field]: next } })}
-          />
-        ))}
+      <View style={styles.tagHead}>
+        <Text style={[type.caption, styles.tagCount]}>
+          {open} / {DIMENSIONS.length} open
+        </Text>
+        <Text style={[type.caption, styles.tagCount]}>Closed scores zero</Text>
       </View>
 
-      <Divider style={styles.divider} />
-
-      <Text style={[type.micro, styles.groupLabel]}>WHAT THE MATCHER MAY SCORE</Text>
-      <Text style={[type.caption, styles.dimBlurb]}>
-        A closed dimension is not hidden from the card — it is removed from the arithmetic on
-        both sides, so it cannot influence a score anyone proves. The sensitive three are closed
-        until you open them.
-      </Text>
-      <View style={styles.rows}>
+      <View style={styles.tags}>
         {DIMENSIONS.map((dimension, index) => {
+          const on = !!mask[index];
           const sensitive = SENSITIVE_BY_DEFAULT.includes(dimension);
           return (
-            <ToggleRow
+            <Pressable
               key={dimension}
-              title={dimension[0].toUpperCase() + dimension.slice(1)}
-              on={!!mask[index]}
-              onLabel={sensitive ? 'Open — you chose to include this' : 'Scored'}
-              offLabel={sensitive ? 'Closed by default' : 'Closed — scored as zero'}
-              onChange={() => onToggleDimension(dimension)}
-            />
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: on }}
+              accessibilityLabel={dimension}
+              onPress={() => {
+                void Haptics.selectionAsync();
+                onToggleDimension(dimension);
+              }}
+              style={[styles.tag, on && styles.tagOn]}
+            >
+              {/* The lock marks the three that start closed, and only while
+                  they are closed - once opened it would be describing a state
+                  that is no longer the case. */}
+              {sensitive && !on ? (
+                <Icon name="lock" size={11} color={alpha.t38} style={styles.tagLock} />
+              ) : null}
+              <Text style={[type.caption, styles.tagLabel, on && styles.tagLabelOn]}>
+                {dimension}
+              </Text>
+            </Pressable>
           );
         })}
       </View>
@@ -307,17 +414,40 @@ export function DisclosureSection({
 }
 
 const styles = StyleSheet.create({
+  row: { flexDirection: 'row', gap: space.md },
+  rowGrow: { flex: 1 },
+  rowAge: { width: 88 },
+  /** Kills the trailing margin a Field carries, so the card ends on the control. */
+  last: { marginBottom: 0 },
+
   tagHead: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: space.lg,
+    marginBottom: space.md,
   },
   tagCount: { color: alpha.t56 },
   tagError: { color: palette.negative },
 
-  group: { marginBottom: space.lg },
-  groupLabel: { letterSpacing: 1.3, color: alpha.t38, marginBottom: space.sm },
+  railClip: { marginBottom: space.md },
+  rail: { flexDirection: 'row', gap: 6, paddingRight: space.xl },
+  railItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    height: 30,
+    paddingHorizontal: 12,
+    borderRadius: radii.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'transparent',
+  },
+  railItemOn: {
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderColor: alpha.t10,
+  },
+  railLabel: { color: alpha.t38, textTransform: 'capitalize' },
+  railLabelOn: { color: palette.white },
+  railDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: palette.violet },
 
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
   tag: {
@@ -334,11 +464,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(168,85,247,0.20)',
     borderColor: 'rgba(216,180,254,0.45)',
   },
-  tagLabel: { color: alpha.t56 },
+  /** At the cap, unpicked tags stop inviting a tap that would do nothing. */
+  tagMuted: { opacity: 0.4 },
+  tagLabel: { color: alpha.t56, textTransform: 'capitalize' },
   tagLabelOn: { color: palette.white },
   tagClose: { marginLeft: 6 },
+  tagLock: { marginRight: 5 },
 
-  custom: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.sm },
+  custom: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: space.md },
   customInput: {
     flex: 1,
     height: 44,
@@ -361,16 +494,21 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(216,180,254,0.4)',
   },
-  chosen: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: space.lg },
+  chosen: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+    marginTop: space.md,
+    paddingTop: space.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: alpha.t08,
+  },
 
-  rows: { marginTop: space.xs },
   always: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
+    paddingVertical: 11,
   },
   alwaysNote: { color: alpha.t38 },
-  divider: { marginVertical: space.xl },
-  dimBlurb: { marginBottom: space.sm, lineHeight: 18 },
 });

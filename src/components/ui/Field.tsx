@@ -133,9 +133,11 @@ export function Segmented<T extends string>({
 /**
  * A single disclosure decision.
  *
- * The subtitle changes with the switch rather than describing the setting in
- * the abstract, so the row always states what is true right now instead of
- * what the toggle is called.
+ * The subtitle is optional and, when given, changes with the switch rather than
+ * describing the setting in the abstract - so the row states what is true right
+ * now instead of what the toggle is called. Omit both labels where the title
+ * already says it: six rows each carrying a line of explanation is a wall of
+ * text, and the reader stops at the third one.
  */
 export function ToggleRow({
   title,
@@ -147,16 +149,17 @@ export function ToggleRow({
 }: {
   title: string;
   on: boolean;
-  onLabel: string;
-  offLabel: string;
+  onLabel?: string;
+  offLabel?: string;
   onChange: (next: boolean) => void;
   style?: StyleProp<ViewStyle>;
 }) {
+  const sub = on ? onLabel : offLabel;
   return (
     <View style={[styles.toggle, style]}>
       <View style={styles.toggleText}>
         <Text style={type.body}>{title}</Text>
-        <Text style={[type.caption, styles.toggleSub]}>{on ? onLabel : offLabel}</Text>
+        {sub ? <Text style={[type.caption, styles.toggleSub]}>{sub}</Text> : null}
       </View>
       <Switch
         value={on}

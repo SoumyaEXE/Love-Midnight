@@ -2,14 +2,17 @@ import React, { useCallback, useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { GlowBackdrop } from '@/components/ui/GlowBackdrop';
 import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { Card, ScreenHeader, SectionLabel } from '@/components/ui/primitives';
 import { MetalButton } from '@/components/ui/MetalButton';
 import {
-  AboutSection,
-  DisclosureSection,
+  BioSection,
+  CardSection,
+  IdentitySection,
   InterestsSection,
+  ScoringSection,
 } from '@/components/profile/ProfileForm';
 import { Icon } from '@/components/icons/Icon';
 import { alpha, palette, radius as radii, space } from '@/theme/tokens';
@@ -20,8 +23,10 @@ import { isComplete, problems } from '@/state/profile';
 /**
  * Editing the profile after onboarding.
  *
- * Same three sections, all on one page - by this point the user knows what
- * they are looking at and does not need to be walked through it.
+ * The same sections onboarding walks through, all on one page - by this point
+ * the user knows what they are looking at and does not need to be paced. They
+ * are still separate cards rather than one long form, so a change to a single
+ * thing is a scroll to one card rather than a hunt through twenty-six controls.
  *
  * Saving re-publishes, and that is the honest behaviour rather than an extra
  * step: the commitment covers both the answers and the disclosure list, so a
@@ -36,6 +41,7 @@ export default function ProfileEditScreen() {
 
   const [showErrors, setShowErrors] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
 
   const save = useCallback(async () => {
@@ -47,13 +53,24 @@ export default function ProfileEditScreen() {
     setFailed(null);
     try {
       await publishProfile();
-      router.back();
+      // Confirmed in place rather than by popping the screen. A save that
+      // navigates away is indistinguishable from a save that silently failed.
+      setSaved(true);
     } catch (error) {
       setFailed(error instanceof Error ? error.message : 'Could not publish');
     } finally {
       setBusy(false);
     }
-  }, [profile, publishProfile, router]);
+  }, [profile, publishProfile]);
+
+  /** Any edit after a save invalidates the confirmation it is sitting under. */
+  const edit = useCallback(
+    (next: Parameters<typeof saveProfile>[0]) => {
+      setSaved(false);
+      saveProfile(next);
+    },
+    [saveProfile],
+  );
 
   const found = showErrors ? problems(profile) : {};
   const blocking = Object.values(found).filter(Boolean).length;
@@ -76,46 +93,48 @@ export default function ProfileEditScreen() {
         >
           <ScreenHeader title="Edit profile" onBack={() => router.back()} />
 
-          <SectionLabel>About you</SectionLabel>
+          <SectionLabel>Who you are</SectionLabel>
           <View style={styles.section}>
             <Card radius={radii.card}>
-              <AboutSection profile={profile} onChange={saveProfile} showErrors={showErrors} />
+              <IdentitySection profile={profile} onChange={edit} showErrors={showErrors} />
+            </Card>
+          </View>
+
+          <SectionLabel>Bio</SectionLabel>
+          <View style={styles.section}>
+            <Card radius={radii.card}>
+              <BioSection profile={profile} onChange={edit} />
             </Card>
           </View>
 
           <SectionLabel>Interests</SectionLabel>
           <View style={styles.section}>
             <Card radius={radii.card}>
-              <InterestsSection
-                profile={profile}
-                onChange={saveProfile}
-                showErrors={showErrors}
-              />
+              <InterestsSection profile={profile} onChange={edit} showErrors={showErrors} />
             </Card>
           </View>
 
-          <SectionLabel>What you show</SectionLabel>
+          <SectionLabel>On your card</SectionLabel>
           <View style={styles.section}>
             <Card radius={radii.card}>
-              <DisclosureSection
-                profile={profile}
-                onChange={saveProfile}
+              <CardSection profile={profile} onChange={edit} />
+            </Card>
+          </View>
+
+          <SectionLabel>What the matcher scores</SectionLabel>
+          <View style={styles.section}>
+            <Card radius={radii.card}>
+              <ScoringSection
                 mask={mask}
-                onToggleDimension={toggleDimension}
+                onToggleDimension={(dimension) => {
+                  setSaved(false);
+                  toggleDimension(dimension);
+                }}
               />
             </Card>
           </View>
 
           <View style={styles.section}>
-            <View style={styles.note}>
-              <Icon name="cube" size={15} color={palette.violet} />
-              <Text style={[type.caption, styles.noteLabel]}>
-                Saving re-commits the record on Midnight and mirrors a receipt to Solana. Your
-                answers stay on this device — only the commitment and the list of visible fields
-                are published.
-              </Text>
-            </View>
-
             {failed ? <Text style={[type.caption, styles.failed]}>{failed}</Text> : null}
             {blocking ? (
               <Text style={[type.caption, styles.failed]}>
@@ -123,13 +142,24 @@ export default function ProfileEditScreen() {
               </Text>
             ) : null}
 
+            {saved ? (
+              <Animated.View entering={FadeIn.duration(240)} style={styles.saved}>
+                <View style={styles.tick}>
+                  <Icon name="check" size={14} color={palette.positive} />
+                </View>
+                <Text style={[type.callout, styles.savedLabel]}>
+                  Saved on chain — committed on Midnight, receipt ready for Solana.
+                </Text>
+              </Animated.View>
+            ) : null}
+
             <MetalButton
-              label="Save and re-commit"
-              variant="violet"
+              label={saved ? 'Done' : 'Save and re-commit'}
+              variant={saved ? 'metal' : 'violet'}
               size="lg"
               fullWidth
               loading={busy}
-              onPress={() => void save()}
+              onPress={saved ? () => router.back() : () => void save()}
               style={styles.save}
             />
           </View>
@@ -146,17 +176,26 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   section: { marginHorizontal: space.xl, marginBottom: space.lg },
 
-  note: {
+  saved: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: space.sm,
+    alignItems: 'center',
+    gap: space.md,
     padding: space.md,
     borderRadius: radii.md,
-    backgroundColor: 'rgba(255,255,255,0.045)',
+    backgroundColor: 'rgba(52,211,153,0.08)',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: alpha.t08,
+    borderColor: 'rgba(52,211,153,0.28)',
   },
-  noteLabel: { flex: 1, lineHeight: 17 },
-  failed: { marginTop: space.md, color: palette.negative },
+  tick: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(52,211,153,0.14)',
+  },
+  savedLabel: { flex: 1, color: alpha.t72 },
+
+  failed: { marginBottom: space.md, color: palette.negative },
   save: { marginTop: space.lg },
 });
