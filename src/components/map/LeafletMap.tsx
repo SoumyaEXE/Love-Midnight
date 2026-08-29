@@ -5,7 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { alpha, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
 import { MAP_HTML } from '@/components/map/mapDocument';
-import { cartoTileTemplate, mapConfig } from '@/config/map';
+import { cartoTileTemplate } from '@/config/map';
 import { BUCKET_REACH_M, ORIGIN, placeSubjects } from '@/components/map/placement';
 import { gravatarUrl } from '@/data/gravatar';
 import { DISTANCE_LABEL, type DistanceBucket } from '@/chain/midnight/types';
@@ -249,7 +249,6 @@ export function LeafletMap({
  */
 const TILE_BOOTSTRAP = `window.__HALO_TILES = ${JSON.stringify({
   url: cartoTileTemplate(),
-  attribution: mapConfig.attribution,
 })}; true;`;
 
 /** 500 -> "500 m", 1500 -> "1.5 km", 8000 -> "8 km". */

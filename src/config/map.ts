@@ -55,8 +55,6 @@ export const mapConfig = {
   basemap: (extra.cartoBasemap ?? 'dark_all') as CartoBasemap,
   /** Maps API v3 base. Unused by the basemap; see the note above. */
   apiBaseUrl: extra.cartoApiBase ?? 'https://gcp-us-east1.api.carto.com',
-  /** Required by CARTO's basemap terms and by the OSM licence, key or no key. */
-  attribution: '© OpenStreetMap · © CARTO',
 } as const;
 
 /**

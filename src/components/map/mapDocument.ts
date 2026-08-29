@@ -82,12 +82,6 @@ export const MAP_HTML = `<!doctype html>
   #pill b{font-weight:500;color:#fff}
   #pill i{width:6px;height:6px;border-radius:50%;background:#A855F7;box-shadow:0 0 8px #A855F7;display:block}
 
-  /* Required by CARTO's basemap terms and by the OSM licence, key or no key.
-     Quiet, but present and legible - not a hidden attribution. */
-  #attrib{position:absolute;left:10px;bottom:9px;z-index:1300;pointer-events:none;
-    font-size:9.5px;letter-spacing:.15px;color:rgba(255,255,255,.42);
-    text-shadow:0 1px 3px rgba(0,0,0,.95)}
-
   #ctl{position:absolute;right:12px;bottom:12px;z-index:1300;display:flex;flex-direction:column;gap:7px}
   #ctl button{width:36px;height:36px;padding:0;border-radius:12px;cursor:pointer;
     display:flex;align-items:center;justify-content:center;
@@ -105,7 +99,6 @@ export const MAP_HTML = `<!doctype html>
 <div id="map"></div>
 <div id="vignette"></div>
 <div id="pill"><i></i><span id="pill-text"></span></div>
-<div id="attrib"></div>
 <div id="ctl">
   <button id="zin" aria-label="Zoom in">+</button>
   <button id="zout" aria-label="Zoom out">&#8722;</button>
@@ -164,10 +157,6 @@ export const MAP_HTML = `<!doctype html>
         keepBuffer: 3
       }
     ).addTo(map);
-
-    if (tiles.attribution) {
-      document.getElementById('attrib').textContent = tiles.attribution;
-    }
 
     shapes.addTo(map);
     pins.addTo(map);
