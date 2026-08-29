@@ -11,9 +11,16 @@ export const palette = {
   void: '#07060A',
   voidLift: '#0C0A11',
 
-  /** Card / surface stack, all sitting on `void`. */
-  surface: '#131019',
-  surfaceRaised: '#1A1620',
+  /**
+   * Card / surface stack, all sitting on `void`.
+   *
+   * The steps between these and `void` are deliberately larger than they look
+   * on a calibrated monitor. On a phone at half brightness in a lit room, a
+   * 4-value gap between substrate and card simply is not visible, and the cards
+   * dissolve into the background.
+   */
+  surface: '#181322',
+  surfaceRaised: '#211B2D',
   surfaceSunken: '#0F0C14',
 
   /** The violet. `core` is the CTA fill, `bloom` is the light source. */

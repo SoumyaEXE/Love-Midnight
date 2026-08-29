@@ -33,8 +33,17 @@ export type LiquidGlassProps = {
   style?: StyleProp<ViewStyle>;
   /** Corner radius. Drives both the clip and the Skia rim geometry. */
   radius?: number;
-  /** Backdrop blur strength, 0-100. The comps sit around 40-60. */
+  /** Backdrop blur strength, 0-100. */
   intensity?: number;
+  /**
+   * Opacity of the dark substrate painted under the blur, 0-1.
+   *
+   * This, not `intensity`, is what makes text on glass legible. Blur alone only
+   * smears whatever is behind the panel - a bright avatar or a lit radar ring
+   * stays bright once blurred, and light body copy sitting on it disappears.
+   * The substrate is what guarantees a floor of contrast.
+   */
+  opacity?: number;
   /** Extra white wash on top of the blur. Raise it over busy backdrops. */
   tint?: number;
   /** Rim brightness. 0 disables the Skia layer entirely. */
@@ -136,7 +145,8 @@ export function LiquidGlass({
   children,
   style,
   radius = radii.card,
-  intensity = 48,
+  intensity = 64,
+  opacity = 0.78,
   tint = 0.06,
   specular = 0.55,
   chroma = 0.75,
@@ -159,7 +169,11 @@ export function LiquidGlass({
 
   return (
     <View
-      style={[styles.root, { borderRadius: radius }, style]}
+      style={[
+        styles.root,
+        { borderRadius: radius, backgroundColor: `rgba(16,13,22,${opacity})` },
+        style,
+      ]}
       onLayout={(e) => {
         const { width, height } = e.nativeEvent.layout;
         setSize((prev) =>
@@ -169,7 +183,27 @@ export function LiquidGlass({
         );
       }}
     >
-      <BlurView intensity={intensity} tint="dark" style={StyleSheet.absoluteFill} pointerEvents="none" />
+      {/*
+        Android is left on the default blur method deliberately.
+
+        `dimezisBlurView` needs a `blurTarget` ref pointing at a
+        `BlurTargetView` whose canvas it samples. Every glass surface here is a
+        descendant of the app root, so any root-level target would contain the
+        very BlurViews sampling it - drawing the target requires drawing them,
+        which requires the target. That recursion crashed the app on launch.
+        Without a target the method silently degrades to 'none', so requesting
+        it buys nothing but a warning.
+
+        The fallback is a translucent panel, which is why `opacity` carries the
+        contrast here rather than the blur. iOS is unaffected: UIVisualEffectView
+        samples the compositor's output and needs no target.
+      */}
+      <BlurView
+        intensity={intensity}
+        tint="dark"
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
 
       {/* Top-lit wash. The second stop is near-zero so the bottom of the panel
           stays transparent and the backdrop reads through. */}
@@ -201,7 +235,9 @@ export function LiquidGlass({
  * sheets and the tab bar, where a hot rim would compete with content.
  */
 export function GlassPanel(props: LiquidGlassProps) {
-  return <LiquidGlass intensity={62} tint={0.05} specular={0.38} chroma={0.9} {...props} />;
+  return (
+    <LiquidGlass intensity={80} opacity={0.86} tint={0.05} specular={0.38} chroma={0.9} {...props} />
+  );
 }
 
 /** Drives `tilt` from a 0-1 press progress value. */
@@ -212,7 +248,7 @@ export function usePressTilt(progress: SharedValue<number>, sweep = 0.9) {
 const styles = StyleSheet.create({
   root: {
     overflow: 'hidden',
-    backgroundColor: 'rgba(19,16,25,0.55)',
+    // backgroundColor is supplied per-instance from `opacity`.
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: alpha.t08,
   },

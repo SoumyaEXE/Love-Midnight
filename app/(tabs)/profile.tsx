@@ -3,8 +3,8 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
-import Animated, { FadeInDown } from 'react-native-reanimated';
 import { GlowBackdrop } from '@/components/ui/GlowBackdrop';
+import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { LiquidGlass } from '@/components/glass/LiquidGlass';
 import { Avatar } from '@/components/ui/Avatar';
 import { MetalButton } from '@/components/ui/MetalButton';
@@ -173,8 +173,8 @@ export default function ProfileScreen() {
             </Card>
           ) : (
             <View style={styles.proofList}>
-              {proofs.slice(0, 6).map((proof, index) => (
-                <Animated.View key={proof.id} entering={FadeInDown.delay(index * 45).duration(340)}>
+              {proofs.slice(0, 6).map((proof) => (
+                <View key={proof.id}>
                   <SettingRow
                     icon={proof.kind === 'proximity' ? 'pin' : proof.kind === 'match' ? 'sparkle' : 'fingerprint'}
                     tone="violet"
@@ -182,7 +182,7 @@ export default function ProfileScreen() {
                     subtitle={`${proof.provingMs} ms · ${proof.simulated ? 'local prover' : 'proof server'}`}
                     onPress={() => router.push(`/proof/${proof.id}`)}
                   />
-                </Animated.View>
+                </View>
               ))}
             </View>
           )}
@@ -204,6 +204,8 @@ export default function ProfileScreen() {
           />
         </View>
       </ScrollView>
+
+      <ScrollScrim />
     </View>
   );
 }

@@ -53,8 +53,8 @@ export function Card({
       <LinearGradient
         colors={
           active
-            ? ['rgba(168,85,247,0.22)', 'rgba(124,34,206,0.10)']
-            : ['rgba(255,255,255,0.055)', 'rgba(255,255,255,0.015)']
+            ? ['rgba(168,85,247,0.26)', 'rgba(124,34,206,0.12)']
+            : ['rgba(255,255,255,0.075)', 'rgba(255,255,255,0.025)']
         }
         start={{ x: 0, y: 0 }}
         end={{ x: 0.6, y: 1 }}
@@ -371,7 +371,9 @@ const styles = StyleSheet.create({
   card: {
     overflow: 'hidden',
     backgroundColor: palette.surface,
-    borderWidth: StyleSheet.hairlineWidth,
+    // A full pixel, not a hairline: on a 3x screen a hairline border is a third
+    // of a pixel and effectively disappears against the substrate.
+    borderWidth: 1,
     borderColor: border.hairline,
     ...shadow.card,
   },

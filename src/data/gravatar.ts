@@ -9,9 +9,15 @@ import * as Crypto from 'expo-crypto';
  * in-flight promise.
  *
  * Note on the fallback: none of the demo emails are registered, so every avatar
- * resolves to whatever `d` names. `robohash` and `identicon` are deterministic
- * and unique per persona, which is what a demo roster needs. Point `d` at a
- * hosted portrait set if the pitch deck needs faces.
+ * resolves to whatever `d` names. `robohash` is the default - its plates read as
+ * deliberate, characterful artwork at avatar size and sit well against the
+ * violet. `wavatar` was tried on the grounds that it generates faces, and looked
+ * markedly worse in situ: muddy cartoon heads that fight the palette.
+ *
+ * For real portraits, `d` also accepts an absolute https URL, so pointing this
+ * at a hosted set is a one-line change:
+ *
+ *   gravatarUrl(email, { fallback: 'https://example.com/portraits/default.jpg' })
  */
 
 export type GravatarDefault =

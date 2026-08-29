@@ -12,7 +12,7 @@ Every claim the app makes about a person is the output of a zero-knowledge circu
 
 A conventional dating app puts people on a map. That is a confession — it can only draw a pin because it is holding a coordinate, and once it holds one it can sell it, leak it, or be compelled to hand it over.
 
-Halo cannot draw a pin. Its circuit yields a *bucket* — closest, nearby, walkable, area — and nothing else. The radar screen is the honest visualisation of exactly what the app knows, which is why the rings are drawn soft-edged and slightly off-centre: a bucket is an uncertain region, and drawing it as a precise ring would claim a precision the proof does not provide.
+Halo cannot draw a pin. Its circuit yields a *bucket* — closest, nearby, walkable, area — and nothing else. So the home screen is a real map, but nobody on it has a position: each person is a soft **uncertainty area** whose radius is the bucket their proof disclosed, with their avatar at the centre of the region rather than at a point. Zooming never sharpens it, because there is nothing sharper underneath.
 
 The same move is made three more times:
 
@@ -61,7 +61,9 @@ npm install
 npx expo start
 ```
 
-Press `i` for iOS, `a` for Android. Requires a development build for Skia and the blur views — Expo Go will not render the glass.
+Press `i` for iOS, `a` for Android. It runs in Expo Go — Skia and the blur views are both bundled there — so no development build is needed to demo it.
+
+Two warnings on start are expected and harmless: `rpc-websockets` and `@noble/hashes` are `@solana/web3.js` dependencies whose `exports` maps do not cover React Native's platform resolution, so Metro falls back to file-based resolution and they work.
 
 ### Pointing at real infrastructure
 
@@ -107,7 +109,9 @@ Vercel's **Geist** across the whole ramp, weighted thin — display copy sits at
 
 **Icons** ([`src/components/icons/Icon.tsx`](src/components/icons/Icon.tsx)) are drawn to Nucleo UI's construction rules — 24px grid, 1.5 stroke, round caps, half-pixel alignment — because Nucleo is commercially licensed and its SVGs cannot be vendored. Swap a `case` body for licensed path data and the wrapper keeps supplying stroke, colour, and sizing.
 
-**Avatars** resolve through Gravatar's SHA-256 endpoint via `expo-crypto`. None of the demo addresses are registered, so each falls back to a deterministic generated avatar; change `fallback` in [`src/data/gravatar.ts`](src/data/gravatar.ts) to point at a hosted portrait set.
+**The map** ([`src/components/map/`](src/components/map/)) is a Skia vector map, generated rather than fetched. That is a privacy decision before it is a technical one: requesting tiles means sending coordinates to a third party on every pan, which is the exact disclosure this app exists to avoid. Leaflet would need a WebView plus network tiles in someone else's palette; `react-native-maps` needs an API key and is unreliable in Expo Go. So `cityPlan.ts` generates a deterministic pseudo-city — water, parkland, blocks, streets, arterials, tilted off-axis — and `PrivacyMap.tsx` draws it with the uncertainty areas over the top. It depicts nowhere, because the app knows nowhere.
+
+**Avatars** resolve through Gravatar's SHA-256 endpoint via `expo-crypto`. None of the demo addresses are registered, so each falls back to `wavatar` — the only Gravatar style that generates varied faces rather than robots or geometry. `fallback` also accepts an absolute https URL, so pointing it at a hosted portrait set is one line in [`src/data/gravatar.ts`](src/data/gravatar.ts).
 
 ---
 

@@ -93,33 +93,45 @@ export const MODEL_WEIGHTS: number[] = [
  * black box ran, not that a rule was followed.
  */
 const KEYWORDS: Record<Dimension, string[]> = {
-  outdoors: ['hiking', 'hike', 'trail', 'camping', 'mountains', 'climbing', 'park', 'outdoors'],
+  outdoors: ['hiking', 'hike', 'trail', 'camping', 'mountains', 'climbing', 'park', 'outdoors', 'walks'],
   nightlife: ['bars', 'club', 'dancing', 'cocktail', 'nightlife', 'party', 'dj'],
-  reading: ['reading', 'books', 'novel', 'literature', 'poetry', 'bookshop'],
+  reading: ['reading', 'books', 'novel', 'novels', 'literature', 'poetry', 'bookshop'],
   film: ['films', 'movies', 'cinema', 'film', 'director', 'documentary'],
   music: ['music', 'concerts', 'gigs', 'vinyl', 'band', 'festival', 'guitar'],
-  food: ['foodie', 'cooking', 'restaurants', 'coffee', 'baking', 'wine', 'brunch'],
-  travel: ['travel', 'travelling', 'backpacking', 'flights', 'countries', 'wander'],
+  food: ['foodie', 'cooking', 'restaurants', 'coffee', 'baking', 'wine', 'brunch', 'ramen', 'dinners'],
+  travel: ['travel', 'travelling', 'backpacking', 'flights', 'countries', 'wander', 'wandering'],
   fitness: ['gym', 'running', 'yoga', 'cycling', 'lifting', 'marathon', 'swimming'],
   art: ['art', 'galleries', 'painting', 'design', 'photography', 'museum'],
   gaming: ['gaming', 'games', 'playstation', 'steam', 'board games', 'chess'],
-  tech: ['tech', 'engineer', 'startup', 'coding', 'developer', 'crypto', 'ai'],
+  tech: ['tech', 'engineer', 'startup', 'coding', 'developer', 'crypto', 'ai', 'building'],
   politics: ['politics', 'activism', 'organising', 'policy', 'union'],
   spirituality: ['meditation', 'spiritual', 'mindfulness', 'faith', 'church', 'temple'],
-  family: ['family', 'kids', 'dog', 'cat', 'nephew', 'niece', 'home'],
+  family: ['family', 'kids', 'dog', 'cat', 'nephew', 'niece', 'home', 'household'],
   health: ['sober', 'vegan', 'vegetarian', 'wellness', 'therapy', 'recovery'],
   career: ['career', 'work', 'founder', 'ambitious', 'building', 'business'],
 };
 
 const SCALE = 1000;
+/** Score axis, mirroring `AXIS` in the prover. */
+const AXIS = 10000;
+
+/**
+ * Signal strength per evidence type.
+ *
+ * A chosen tag is a deliberate declaration and nearly saturates its dimension;
+ * a word in prose is often incidental and is worth about half. These are tuned
+ * so a pair sharing three or four genuine interests lands mid-band rather than
+ * scraping the floor - with weaker values every real pair collapsed into
+ * band 0 and the scale carried no information.
+ */
+const TAG_SIGNAL = 900;
+const PROSE_SIGNAL = 450;
 
 /**
  * Builds an interest vector from a bio and explicit interest tags.
  *
- * Tags are weighted more heavily than prose because a chosen tag is a
- * deliberate signal and a word in a bio is often incidental. Values are clamped
- * to the circuit's [0, SCALE] range - the circuit asserts this, so producing an
- * out-of-range vector here would fail at proving time rather than here.
+ * Values are clamped to the circuit's [0, SCALE] range - the circuit asserts
+ * this, so an out-of-range vector fails at proving time rather than here.
  */
 export function buildVector(bio: string, tags: string[] = []): InterestVector {
   const haystack = bio.toLowerCase();
@@ -128,8 +140,8 @@ export function buildVector(bio: string, tags: string[] = []): InterestVector {
   return DIMENSIONS.map((dimension) => {
     let score = 0;
     for (const keyword of KEYWORDS[dimension]) {
-      if (tagSet.has(keyword)) score += 420;
-      else if (haystack.includes(keyword)) score += 180;
+      if (tagSet.has(keyword)) score += TAG_SIGNAL;
+      else if (haystack.includes(keyword)) score += PROSE_SIGNAL;
     }
     return Math.min(score, SCALE);
   });
@@ -166,13 +178,23 @@ export function match(
 ): MatchResult {
   const score = compatibilityScore(a, b, weights, maskA, maskB);
 
-  const drivers = DIMENSIONS.map((dimension, i) => ({
-    dimension,
-    contribution: Math.floor(
-      ((a[i] ?? 0) * (b[i] ?? 0) * (weights[i] ?? 0) * (maskA[i] ?? 0) * (maskB[i] ?? 0)) /
-        (SCALE * SCALE),
-    ),
-  }))
+  // Each driver's contribution is its own term over the same denominator the
+  // score uses, so the bars sum to the score rather than to some other number.
+  let denominator = 0;
+  for (let i = 0; i < DIMENSIONS.length; i += 1) {
+    const consent = (maskA[i] ?? 0) * (maskB[i] ?? 0);
+    denominator +=
+      (weights[i] ?? 0) * consent * Math.max(a[i] ?? 0, b[i] ?? 0) * SCALE;
+  }
+
+  const drivers = DIMENSIONS.map((dimension, i) => {
+    const consent = (maskA[i] ?? 0) * (maskB[i] ?? 0);
+    const term = (a[i] ?? 0) * (b[i] ?? 0) * (weights[i] ?? 0) * consent;
+    return {
+      dimension,
+      contribution: denominator === 0 ? 0 : Math.floor((term * AXIS) / denominator),
+    };
+  })
     .filter((d) => d.contribution > 0)
     .sort((x, y) => y.contribution - x.contribution)
     .slice(0, 4);

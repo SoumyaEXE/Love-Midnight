@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { GlowBackdrop } from '@/components/ui/GlowBackdrop';
+import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { LiquidGlass } from '@/components/glass/LiquidGlass';
 import { MetalButton } from '@/components/ui/MetalButton';
 import { Badge, Card, Divider, IconButton } from '@/components/ui/primitives';
@@ -182,6 +183,8 @@ export default function ProofScreen() {
           style={styles.done}
         />
       </ScrollView>
+
+      <ScrollScrim />
     </View>
   );
 }

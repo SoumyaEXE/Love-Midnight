@@ -54,7 +54,23 @@ export function Avatar({
   const dot = Math.max(8, Math.round(size * 0.22));
 
   return (
-    <View style={[{ width: size, height: size }, style]}>
+    // The contact shadow lives on this outer view, not on the ring: the ring
+    // clips its children, and on iOS `overflow: hidden` clips the shadow too,
+    // so an avatar with its shadow on the ring reads as pasted flat onto the
+    // card rather than sitting in it.
+    <View
+      style={[
+        { width: size, height: size },
+        size >= 32 && {
+          shadowColor: '#000000',
+          shadowOpacity: 0.55,
+          shadowRadius: size * 0.18,
+          shadowOffset: { width: 0, height: size * 0.06 },
+          elevation: 5,
+        },
+        style,
+      ]}
+    >
       <View
         style={[
           styles.ring,
@@ -110,7 +126,11 @@ const styles = StyleSheet.create({
   ring: {
     overflow: 'hidden',
     borderWidth: 1,
-    backgroundColor: palette.surfaceSunken,
+    // Robohash plates arrive with a transparent background, so this colour is
+    // what actually shows behind every demo avatar. A violet-tinted dark keeps
+    // them looking placed in the scene; the near-black substrate turned each
+    // one into a flat black disc.
+    backgroundColor: '#1B1428',
   },
   image: {
     width: '100%',

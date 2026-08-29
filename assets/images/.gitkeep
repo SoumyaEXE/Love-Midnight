@@ -1,0 +1,3 @@
+Metro's dev asset server scandirs this directory when a client connects.
+Without it, the server logs ENOENT on every launch. Keeping it present (and
+empty) turns that into a clean miss.

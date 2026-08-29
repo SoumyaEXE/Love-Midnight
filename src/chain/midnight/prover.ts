@@ -93,6 +93,8 @@ export function matchNullifier(a: Hex, b: Hex, epoch: number): Promise<Hex> {
 // -----------------------------------------------------------------------------
 
 const SCALE = 1000;
+/** Score axis. Bands are cut at 20/40/60/80% of achievable overlap. */
+const AXIS = 10000;
 const CELL_BUCKETS: [number, DistanceBucket][] = [
   [1, 0],
   [16, 1],
@@ -117,9 +119,27 @@ export function bucketOf(squared: number): DistanceBucket | null {
  * The scorer, in plain TypeScript. Runs first so the UI can show a result
  * immediately; the circuit then proves the same computation was honest.
  *
- * Keep this in lockstep with `compatibility` in match.compact - including the
- * integer division, which truncates. Using floating point here would produce a
- * score the circuit disagrees with at band boundaries.
+ * The score is a *normalised* weighted overlap on a fixed 0-10000 axis:
+ *
+ *   raw   = sum a[i] * b[i] * w[i] * consent[i]
+ *   denom = sum w[i] * consent[i] * max(a[i], b[i]) * SCALE
+ *   score = raw * AXIS / denom
+ *
+ * Two properties matter, and an unnormalised dot product has neither.
+ *
+ * The denominator only accumulates where at least one party has signal, so
+ * the fourteen dimensions neither of them cares about cannot drag the result
+ * toward zero. Normalising against the full basis instead makes every real
+ * pair score in the low hundreds and collapses the bands.
+ *
+ * And because the denominator is gated by the same consent term as the
+ * numerator, closing a dimension removes it from both sides. Withholding
+ * something therefore cannot lower your band - which is the only defensible
+ * behaviour in an app whose entire argument is that privacy is free.
+ *
+ * Keep this in lockstep with `compatibility` in match.compact, including the
+ * truncating integer division. Floating point here would disagree with the
+ * circuit at band boundaries.
  */
 export function compatibilityScore(
   a: number[],
@@ -128,12 +148,21 @@ export function compatibilityScore(
   maskA: number[],
   maskB: number[],
 ): number {
-  let acc = 0;
+  let raw = 0;
+  let denom = 0;
+
   for (let i = 0; i < 16; i += 1) {
     const consent = (maskA[i] ?? 0) * (maskB[i] ?? 0);
-    acc += (a[i] ?? 0) * (b[i] ?? 0) * (weights[i] ?? 0) * consent;
+    const ai = a[i] ?? 0;
+    const bi = b[i] ?? 0;
+    const w = weights[i] ?? 0;
+
+    raw += ai * bi * w * consent;
+    denom += w * consent * Math.max(ai, bi) * SCALE;
   }
-  return Math.floor(acc / (SCALE * SCALE));
+
+  if (denom === 0) return 0;
+  return Math.floor((raw * AXIS) / denom);
 }
 
 export function bandOf(score: number): MatchBand {

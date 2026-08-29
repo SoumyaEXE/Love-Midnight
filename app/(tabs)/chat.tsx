@@ -2,8 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeInDown } from 'react-native-reanimated';
 import { GlowBackdrop } from '@/components/ui/GlowBackdrop';
+import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { Avatar } from '@/components/ui/Avatar';
 import { IconButton, PressableCard, ScreenHeader } from '@/components/ui/primitives';
 import { Icon } from '@/components/icons/Icon';
@@ -59,15 +59,12 @@ export default function ChatScreen() {
         </View>
 
         <View style={styles.list}>
-          {results.map((conversation, index) => {
+          {results.map((conversation) => {
             const person = PEOPLE_BY_ID.get(conversation.personId);
             if (!person) return null;
 
             return (
-              <Animated.View
-                key={conversation.personId}
-                entering={FadeInDown.delay(index * 45).duration(360)}
-              >
+              <View key={conversation.personId}>
                 <PressableCard
                   radius={radii.lg}
                   active={conversation.unread}
@@ -89,11 +86,13 @@ export default function ChatScreen() {
                   </View>
                   <Text style={[type.micro, styles.rowTime]}>{conversation.at}</Text>
                 </PressableCard>
-              </Animated.View>
+              </View>
             );
           })}
         </View>
       </ScrollView>
+
+      <ScrollScrim />
     </View>
   );
 }

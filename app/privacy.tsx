@@ -3,7 +3,12 @@ import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlowBackdrop } from '@/components/ui/GlowBackdrop';
+import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { Card, SectionLabel, ScreenHeader, SettingRow } from '@/components/ui/primitives';
+import {
+  ReportDetailsSheet,
+  type FiledReport,
+} from '@/components/sheets/ReportDetailsSheet';
 import { MetalButton } from '@/components/ui/MetalButton';
 import { Chip } from '@/components/ui/primitives';
 import { alpha, palette, radius as radii, space } from '@/theme/tokens';
@@ -22,6 +27,24 @@ import { useHalo } from '@/state/store';
 
 const BUCKETS: DistanceBucket[] = [0, 1, 2, 3];
 
+/**
+ * Reports this account has filed.
+ *
+ * Each one records the reason and the moment, and nothing that identifies the
+ * subject - the report is bound to their personhood handle, so moderation can
+ * act on it without anyone learning whose account it is.
+ */
+const FILED_REPORTS: FiledReport[] = [
+  {
+    id: '#RPT-7X9K-2Q4M',
+    personId: 'tom',
+    reasonTitle: 'Fake profile',
+    reasonDetail: 'This user is pretending to be someone else',
+    reasonIcon: 'user-x',
+    submitted: 'May 24, 2024 at 2:35 PM',
+  },
+];
+
 export default function PrivacyScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -29,6 +52,7 @@ export default function PrivacyScreen() {
 
   const [mirrorToSolana, setMirrorToSolana] = useState(false);
   const [allowCalls, setAllowCalls] = useState(false);
+  const [openReport, setOpenReport] = useState<FiledReport | null>(null);
 
   const extend = useCallback(
     (minutes: number) => setVisibility({ live: true, until: Date.now() + minutes * 60_000 }),
@@ -152,8 +176,9 @@ export default function PrivacyScreen() {
           <SettingRow
             icon="flag"
             title="Reports you have filed"
-            subtitle="Anonymous, bound to personhood handles"
+            subtitle={`${FILED_REPORTS.length} report${FILED_REPORTS.length === 1 ? '' : 's'}, bound to personhood handles`}
             tone="negative"
+            onPress={() => setOpenReport(FILED_REPORTS[0] ?? null)}
           />
         </View>
 
@@ -176,6 +201,14 @@ export default function PrivacyScreen() {
           </Card>
         </View>
       </ScrollView>
+
+      <ScrollScrim />
+
+      <ReportDetailsSheet
+        report={openReport}
+        visible={openReport !== null}
+        onClose={() => setOpenReport(null)}
+      />
     </View>
   );
 }

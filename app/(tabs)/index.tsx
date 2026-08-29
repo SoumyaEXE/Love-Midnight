@@ -1,43 +1,49 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useIsFocused, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeIn, FadeInDown, FadeOutDown } from 'react-native-reanimated';
 import { GlowBackdrop } from '@/components/ui/GlowBackdrop';
+import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { LiquidGlass } from '@/components/glass/LiquidGlass';
-import { Radar } from '@/components/radar/Radar';
+import { PrivacyMap } from '@/components/map/PrivacyMap';
 import { Avatar } from '@/components/ui/Avatar';
 import { MetalButton } from '@/components/ui/MetalButton';
-import { Badge, Chip, IconButton } from '@/components/ui/primitives';
+import { Badge, Chip, PressableCard } from '@/components/ui/primitives';
+import { ProfileSheet } from '@/components/sheets/ProfileSheet';
 import { Icon } from '@/components/icons/Icon';
 import { alpha, layout, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
 import { PEOPLE, PEOPLE_BY_ID, SELF } from '@/data/people';
 import { useHalo } from '@/state/store';
-import { DISTANCE_LABEL, type DistanceBucket } from '@/chain/midnight/types';
+import { DISTANCE_LABEL, type DistanceBucket, type MatchBand } from '@/chain/midnight/types';
 
 /**
- * Radar - the app's home.
+ * Home.
  *
- * The screen is arranged around one claim: everything visible here was derived
- * from a proof, not from a location the app is holding. The visibility pill
- * states what is currently being broadcast, the rings show the buckets those
- * broadcasts can land in, and the detail card names the circuit that placed the
- * person on the screen.
+ * Everything visible here was derived from a proof rather than from a location
+ * the app is holding. The map shows proved *areas*; the list below names the
+ * people inside them and the bucket each one proved. The distance chips drive
+ * both from one piece of state, so the map and the list can never disagree
+ * about who is in range.
  */
 
 const BUCKETS: DistanceBucket[] = [0, 1, 2, 3];
 
-export default function RadarScreen() {
+export default function HomeScreen() {
   const router = useRouter();
+  // Tab screens are detached when inactive, so the map's pulse would restart on
+  // every return. Gating on focus also keeps it off the frame budget.
+  const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const { visibility, setVisibility, liveProver, proveProximity } = useHalo();
+  const { visibility, setVisibility, proveProximity, proveMatch, mask } = useHalo();
 
   const [selected, setSelected] = useState<string | null>(null);
-  const [proving, setProving] = useState<string | null>(null);
+  const [busy, setBusy] = useState<'wink' | 'match' | null>(null);
 
-  const radarSize = Math.min(width - space.xl * 2, 380);
+  const mapWidth = width - space.xl * 2;
+  // Slightly taller than wide, the way a plan view wants to be.
+  const mapHeight = Math.min(mapWidth * 1.12, 470);
 
   const subjects = useMemo(
     () =>
@@ -46,11 +52,21 @@ export default function RadarScreen() {
         email: p.email,
         bucket: p.bucket,
         online: p.online,
+        area: p.area,
       })),
     [],
   );
 
-  const person = selected ? PEOPLE_BY_ID.get(selected) : null;
+  /** The chips filter the list and dim the map from one piece of state. */
+  const nearby = useMemo(
+    () =>
+      PEOPLE.filter((p) => p.id !== 'sophie' && p.bucket <= visibility.maxBucket).sort(
+        (a, b) => a.bucket - b.bucket,
+      ),
+    [visibility.maxBucket],
+  );
+
+  const person = selected ? PEOPLE_BY_ID.get(selected) ?? null : null;
 
   const minutesLeft = visibility.until
     ? Math.max(0, Math.round((visibility.until - Date.now()) / 60000))
@@ -63,17 +79,34 @@ export default function RadarScreen() {
    */
   const onWink = useCallback(
     async (personId: string) => {
-      setProving(personId);
+      setBusy('wink');
       try {
         const proof = await proveProximity(personId);
+        setSelected(null);
         router.push(`/proof/${proof.id}`);
       } catch (error) {
         console.warn('[halo] proximity proof failed', error);
       } finally {
-        setProving(null);
+        setBusy(null);
       }
     },
     [proveProximity, router],
+  );
+
+  const onProveMatch = useCallback(
+    async (personId: string, band: MatchBand) => {
+      setBusy('match');
+      try {
+        const proof = await proveMatch(personId, band);
+        setSelected(null);
+        router.push(`/proof/${proof.id}`);
+      } catch (error) {
+        console.warn('[halo] match proof failed', error);
+      } finally {
+        setBusy(null);
+      }
+    },
+    [proveMatch, router],
   );
 
   return (
@@ -83,7 +116,10 @@ export default function RadarScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.content,
-          { paddingTop: insets.top + space.sm, paddingBottom: layout.tabBarHeight + insets.bottom + space['4xl'] },
+          {
+            paddingTop: insets.top + space.sm,
+            paddingBottom: layout.tabBarHeight + insets.bottom + space['4xl'],
+          },
         ]}
         showsVerticalScrollIndicator={false}
       >
@@ -97,53 +133,63 @@ export default function RadarScreen() {
             accessibilityLabel="Your profile"
             onPress={() => router.push('/(tabs)/profile')}
           >
-            <Avatar email={SELF.email} size={42} />
+            <Avatar email={SELF.email} size={44} />
           </Pressable>
         </View>
 
-        {/* Visibility. Phrased as what is being broadcast, not as a toggle
-            state, because that is the thing the user is actually deciding. */}
-        <Animated.View entering={FadeIn.duration(400)} style={styles.visibilityRow}>
-          <LiquidGlass radius={radii.pill} style={styles.visibility} intensity={40} specular={0.45}>
-            <Icon name="broadcast" size={15} color={visibility.live ? palette.violet : alpha.t38} />
-            <Text style={[type.caption, styles.visibilityLabel]}>
-              {visibility.live
-                ? `Visible ${DISTANCE_LABEL[visibility.maxBucket].toLowerCase()}${
-                    minutesLeft ? ` for ${minutesLeft} min` : ''
-                  }`
-                : 'Not broadcasting'}
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Edit visibility"
-              hitSlop={8}
-              onPress={() => setVisibility({ live: !visibility.live })}
+        <View style={styles.visibilityRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Visibility settings"
+            onPress={() => router.push('/privacy')}
+          >
+            <LiquidGlass
+              radius={radii.pill}
+              style={styles.visibility}
+              intensity={40}
+              specular={0.45}
             >
-              <Text style={[type.captionStrong, styles.edit]}>
-                {visibility.live ? 'Stop' : 'Start'}
+              <Icon
+                name="broadcast"
+                size={15}
+                color={visibility.live ? palette.violet : alpha.t38}
+              />
+              <Text style={[type.caption, styles.visibilityLabel]}>
+                {visibility.live
+                  ? `Visible ${DISTANCE_LABEL[visibility.maxBucket].toLowerCase()}${
+                      minutesLeft ? ` for ${minutesLeft} min` : ''
+                    }`
+                  : 'Not broadcasting'}
               </Text>
-            </Pressable>
-          </LiquidGlass>
-        </Animated.View>
+              <Icon
+                name="chevron-right"
+                size={15}
+                color={alpha.t38}
+                style={styles.visibilityChevron}
+              />
+            </LiquidGlass>
+          </Pressable>
+        </View>
 
-        <View style={styles.radarWrap}>
-          <Radar
-            size={radarSize}
+        <View style={styles.mapWrap}>
+          <PrivacyMap
+            width={mapWidth}
+            height={mapHeight}
             subjects={subjects}
             selectedId={selected}
             maxBucket={visibility.maxBucket}
-            live={visibility.live}
-            onSelect={(id) => setSelected((prev) => (prev === id ? null : id))}
+            live={visibility.live && isFocused}
+            onSelect={setSelected}
           />
         </View>
 
-        <View style={styles.proverRow}>
-          <Badge
-            label={liveProver ? 'Proof server live' : 'Local prover'}
-            tone={liveProver ? 'positive' : 'neutral'}
-            icon={liveProver ? 'bolt' : 'cube'}
-          />
-          <Badge label="Midnight testnet" tone="violet" icon="shield-check" style={styles.badgeGap} />
+        {/* States plainly what the markers mean. Without this a viewer reads
+            them as pins, which is precisely the wrong conclusion. */}
+        <View style={styles.legend}>
+          <Icon name="shield-check" size={13} color={palette.violet} />
+          <Text style={[type.caption, styles.legendLabel]}>
+            Each circle is a proved area, not a location. Nobody’s position is known.
+          </Text>
         </View>
 
         <Text style={[type.eyebrow, styles.distanceLabel]}>Distance</Text>
@@ -162,62 +208,72 @@ export default function RadarScreen() {
             />
           ))}
         </ScrollView>
+
+        {/* The people behind the areas. */}
+        <View style={styles.listHead}>
+          <Text style={type.eyebrow}>{DISTANCE_LABEL[visibility.maxBucket]} and closer</Text>
+          <Text style={[type.micro, styles.listCount]}>{nearby.length} people</Text>
+        </View>
+
+        <View style={styles.list}>
+          {nearby.map((entry) => (
+            <PressableCard
+              key={entry.id}
+              radius={radii.lg}
+              style={styles.row}
+              accessibilityLabel={`Open ${entry.name}'s profile`}
+              onPress={() => setSelected(entry.id)}
+            >
+              <Avatar email={entry.email} size={48} online={entry.online} />
+              <View style={styles.rowText}>
+                <Text style={type.body} numberOfLines={1}>
+                  {entry.name}, {entry.age}
+                </Text>
+                <Text style={[type.caption, styles.rowTags]} numberOfLines={1}>
+                  {entry.tags.slice(0, 3).join(' · ')}
+                </Text>
+                <Badge
+                  label={`Proved ${DISTANCE_LABEL[entry.bucket].toLowerCase()}`}
+                  tone="violet"
+                  icon="shield-check"
+                  style={styles.rowBadge}
+                />
+              </View>
+              <Icon name="chevron-right" size={18} color={alpha.t28} />
+            </PressableCard>
+          ))}
+        </View>
+
+        {nearby.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={[type.callout, styles.emptyLabel]}>
+              Nobody has proved they are this close right now.
+            </Text>
+            <MetalButton
+              label="Widen to area"
+              variant="metal"
+              size="md"
+              onPress={() => setVisibility({ maxBucket: 3 })}
+              style={styles.emptyAction}
+            />
+          </View>
+        ) : null}
       </ScrollView>
 
-      {/* Detail card. Slides over the radar rather than navigating, so the
-          user keeps sight of where the person sits while deciding. */}
-      {person ? (
-        <Animated.View
-          entering={FadeInDown.springify().damping(20)}
-          exiting={FadeOutDown.duration(180)}
-          style={[styles.detailWrap, { bottom: layout.tabBarHeight + insets.bottom + space.xl }]}
-        >
-          <LiquidGlass radius={radii.card} style={styles.detail} intensity={55}>
-            <View style={styles.detailHead}>
-              <Avatar email={person.email} size={46} online={person.online} />
-              <View style={styles.detailText}>
-                <Text style={type.body}>
-                  {person.name}, {person.age}
-                </Text>
-                <Text style={[type.caption, styles.detailMeta]} numberOfLines={1}>
-                  {person.tags.slice(0, 2).join(' · ')}
-                </Text>
-                <View style={styles.detailArea}>
-                  <Icon name="shield-check" size={13} color={palette.violet} />
-                  <Text style={[type.caption, styles.detailAreaLabel]}>
-                    Proved {DISTANCE_LABEL[person.bucket].toLowerCase()} · position withheld
-                  </Text>
-                </View>
-              </View>
-              <IconButton
-                name="close"
-                size={30}
-                iconSize={15}
-                accessibilityLabel="Dismiss"
-                onPress={() => setSelected(null)}
-              />
-            </View>
+      <ScrollScrim />
 
-            <View style={styles.detailActions}>
-              <MetalButton
-                label="Send wink"
-                variant="violet"
-                size="md"
-                loading={proving === person.id}
-                onPress={() => void onWink(person.id)}
-                style={styles.detailAction}
-              />
-              <MetalButton
-                label="Quick info"
-                variant="metal"
-                size="md"
-                onPress={() => router.push(`/person/${person.id}`)}
-                style={styles.detailAction}
-              />
-            </View>
-          </LiquidGlass>
-        </Animated.View>
-      ) : null}
+      {/* Profiles rise over the map rather than replacing it, so you keep your
+          place while glancing at someone. */}
+      <ProfileSheet
+        person={person}
+        visible={person !== null}
+        onClose={() => setSelected(null)}
+        mask={mask}
+        onWink={(id) => void onWink(id)}
+        onProveMatch={(id, band) => void onProveMatch(id, band)}
+        winking={busy === 'wink'}
+        proving={busy === 'match'}
+      />
     </View>
   );
 }
@@ -229,50 +285,53 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: space.lg,
+    marginBottom: space.xl,
+    zIndex: 2,
   },
   headerText: { flex: 1 },
   tagline: { marginTop: 3 },
 
-  visibilityRow: { alignItems: 'center' },
+  visibilityRow: { alignItems: 'center', zIndex: 2 },
   visibility: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 9,
-    paddingHorizontal: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
   },
   visibilityLabel: { marginLeft: 8, color: alpha.t72 },
-  edit: { marginLeft: 12, color: palette.violet },
+  visibilityChevron: { marginLeft: 10 },
 
-  radarWrap: {
-    alignItems: 'center',
-    marginTop: space['2xl'],
-    marginBottom: space.xl,
-  },
+  mapWrap: { alignItems: 'center', marginTop: space['2xl'], zIndex: 1 },
 
-  proverRow: {
+  legend: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    marginBottom: space.sm,
+    alignItems: 'flex-start',
+    marginTop: space.lg,
+    marginBottom: space['2xl'],
+    zIndex: 2,
   },
-  badgeGap: { marginLeft: space.sm },
+  legendLabel: { flex: 1, marginLeft: 7, lineHeight: 17 },
 
-  distanceLabel: { marginTop: space.xl, marginBottom: space.md },
-  chips: { paddingRight: space.xl },
+  distanceLabel: { marginBottom: space.md, zIndex: 2 },
+  chips: { paddingRight: space.xl, zIndex: 2 },
   chip: { marginRight: space.sm },
 
-  detailWrap: {
-    position: 'absolute',
-    left: space.xl,
-    right: space.xl,
+  listHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: space['2xl'],
+    marginBottom: space.md,
   },
-  detail: { padding: space.lg },
-  detailHead: { flexDirection: 'row', alignItems: 'center' },
-  detailText: { flex: 1, marginLeft: space.md, marginRight: space.sm },
-  detailMeta: { marginTop: 2 },
-  detailArea: { flexDirection: 'row', alignItems: 'center', marginTop: 5 },
-  detailAreaLabel: { marginLeft: 5, color: alpha.t56 },
+  listCount: { color: alpha.t38 },
 
-  detailActions: { flexDirection: 'row', marginTop: space.lg, gap: space.sm },
-  detailAction: { flex: 1 },
+  list: { gap: space.sm },
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
+  rowText: { flex: 1, marginLeft: space.md, marginRight: space.sm },
+  rowTags: { marginTop: 2 },
+  rowBadge: { marginTop: 7 },
+
+  empty: { alignItems: 'center', paddingTop: space['2xl'] },
+  emptyLabel: { color: alpha.t38, textAlign: 'center' },
+  emptyAction: { marginTop: space.lg },
 });

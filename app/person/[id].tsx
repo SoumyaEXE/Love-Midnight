@@ -3,6 +3,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlowBackdrop } from '@/components/ui/GlowBackdrop';
+import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { LiquidGlass } from '@/components/glass/LiquidGlass';
 import { Avatar } from '@/components/ui/Avatar';
 import { MetalButton } from '@/components/ui/MetalButton';
@@ -39,18 +40,27 @@ export default function PersonScreen() {
     return match(SELF_VECTOR, peerVector, mask, maskFor(person));
   }, [person, mask]);
 
+  /**
+   * Proves the band actually achieved, rather than a fixed threshold.
+   *
+   * Passing a constant `minBand` would make the circuit legitimately refuse
+   * for every low-overlap pair, which reads as a broken button rather than as
+   * the correct answer. Proving the achieved band means the assertion always
+   * holds, and a band of 0 is handled before we get here by not offering the
+   * action at all.
+   */
   const onProve = useCallback(async () => {
-    if (!person) return;
+    if (!person || !result || result.band === 0) return;
     setProving(true);
     try {
-      const proof = await proveMatch(person.id, 1);
+      const proof = await proveMatch(person.id, result.band);
       router.push(`/proof/${proof.id}`);
     } catch (error) {
       console.warn('[halo] match proof failed', error);
     } finally {
       setProving(false);
     }
-  }, [person, proveMatch, router]);
+  }, [person, result, proveMatch, router]);
 
   if (!person || !result) {
     return (
@@ -136,15 +146,22 @@ export default function PersonScreen() {
               </View>
             ) : null}
 
-            <MetalButton
-              label="Prove this match"
-              variant="violet"
-              size="md"
-              fullWidth
-              loading={proving}
-              onPress={() => void onProve()}
-              style={styles.proveAction}
-            />
+            {result.band === 0 ? (
+              <Text style={[type.caption, styles.noProof]}>
+                Not enough shared signal to prove a match. The circuit would refuse, so Halo does
+                not offer it.
+              </Text>
+            ) : (
+              <MetalButton
+                label={`Prove band ${result.band}`}
+                variant="violet"
+                size="md"
+                fullWidth
+                loading={proving}
+                onPress={() => void onProve()}
+                style={styles.proveAction}
+              />
+            )}
           </Card>
         </View>
 
@@ -180,6 +197,8 @@ export default function PersonScreen() {
           />
         </View>
       </ScrollView>
+
+      <ScrollScrim />
     </View>
   );
 }
@@ -231,6 +250,7 @@ const styles = StyleSheet.create({
   withheldLabel: { flex: 1, marginLeft: space.sm, lineHeight: 18 },
 
   proveAction: { marginTop: space.xl },
+  noProof: { marginTop: space.xl, lineHeight: 18 },
 
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   tag: {},

@@ -33,14 +33,17 @@ import CompactStandardLibrary;
 const DIMENSIONS: Uint<8> = 16;
 
 /// Fixed-point scale. Interest weights are integers in [0, 1000].
-const SCALE: Uint<32> = 1000;
+const SCALE: Uint<64> = 1000;
 
-/// Score bands. Disclosing a band rather than a score bounds what an attacker
-/// learns per query to ~2 bits.
-const BAND_1: Uint<32> = 2000;
-const BAND_2: Uint<32> = 4000;
-const BAND_3: Uint<32> = 6000;
-const BAND_4: Uint<32> = 8000;
+/// Score axis. A normalised score runs 0..AXIS.
+const AXIS: Uint<64> = 10000;
+
+/// Score bands, as a share of achievable overlap. Disclosing a band rather
+/// than a score bounds what an attacker learns per query to ~2 bits.
+const BAND_1: Uint<64> = 2000;
+const BAND_2: Uint<64> = 4000;
+const BAND_3: Uint<64> = 6000;
+const BAND_4: Uint<64> = 8000;
 
 /// Hash of the weight vector the network has agreed to score with. Governance
 /// rotates this; clients refuse to prove against an unrecognised model.
@@ -85,11 +88,21 @@ circuit modelCommitment(w: Vector<16, Uint<32>>): Bytes<32> {
   ]);
 }
 
-circuit bandOf(score: Uint<32>): Uint<8> {
-  if (score < BAND_1) { return 0 as Uint<8>; }
-  if (score < BAND_2) { return 1 as Uint<8>; }
-  if (score < BAND_3) { return 2 as Uint<8>; }
-  if (score < BAND_4) { return 3 as Uint<8>; }
+/// Bands from a raw/denominator pair, without ever dividing.
+///
+/// `raw * AXIS >= BAND_k * denom` is exactly `raw * AXIS / denom >= BAND_k`
+/// for positive denom, so cross-multiplying gives the same answer as the
+/// TypeScript scorer while keeping the circuit free of division - which is
+/// both expensive in constraints and a source of off-by-one disagreements at
+/// band boundaries.
+circuit bandOf(raw: Uint<64>, denom: Uint<64>): Uint<8> {
+  if (denom == 0) { return 0 as Uint<8>; }
+
+  const scaled = raw * AXIS;
+  if (scaled < BAND_1 * denom) { return 0 as Uint<8>; }
+  if (scaled < BAND_2 * denom) { return 1 as Uint<8>; }
+  if (scaled < BAND_3 * denom) { return 2 as Uint<8>; }
+  if (scaled < BAND_4 * denom) { return 3 as Uint<8>; }
   return 4 as Uint<8>;
 }
 
@@ -108,19 +121,33 @@ circuit matchNullifier(
 
 /// The scorer itself, expressed as constraints rather than executed code.
 ///
-/// score = sum_i ( w_i * a_i * b_i * mask_i ) / SCALE^2
+///   raw   = sum_i  a_i * b_i * w_i * consent_i
+///   denom = sum_i  w_i * consent_i * max(a_i, b_i) * SCALE
 ///
-/// The mask multiply is what enforces the consent guarantee: a withheld
-/// dimension is multiplied by zero inside the circuit, so no arrangement of
-/// witnesses can make it contribute.
+/// and the normalised score is raw * AXIS / denom, which `bandOf` evaluates by
+/// cross-multiplication rather than division.
+///
+/// Two design points are load-bearing.
+///
+/// The mask multiply enforces the consent guarantee: a withheld dimension is
+/// multiplied by zero, so no arrangement of witnesses can make it contribute.
+///
+/// The denominator carries the *same* consent term as the numerator, and only
+/// accumulates where at least one party has signal. That means closing a
+/// dimension removes it from both sides of the ratio, so withholding can never
+/// lower your band - and dimensions neither party cares about cannot dilute a
+/// genuine match toward zero. An unnormalised dot product has neither property.
+///
+/// Returns (raw, denom) so the caller can band it without a division.
 circuit compatibility(
   a: Vector<16, Uint<32>>,
   b: Vector<16, Uint<32>>,
   w: Vector<16, Uint<32>>,
   maskA: Vector<16, Uint<8>>,
   maskB: Vector<16, Uint<8>>
-): Uint<32> {
-  let acc = 0 as Uint<64>;
+): [Uint<64>, Uint<64>] {
+  let raw = 0 as Uint<64>;
+  let denom = 0 as Uint<64>;
 
   for (const i of 0..16) {
     assert(a[i] <= SCALE, "match: local weight out of range");
@@ -131,15 +158,19 @@ circuit compatibility(
 
     // Both sides must consent for a dimension to count.
     const consent = (maskA[i] * maskB[i]) as Uint<64>;
-    const term = (a[i] as Uint<64>) * (b[i] as Uint<64>) * (w[i] as Uint<64>);
-    acc = acc + (term * consent);
+    const ai = a[i] as Uint<64>;
+    const bi = b[i] as Uint<64>;
+    const wi = w[i] as Uint<64>;
+
+    raw = raw + (ai * bi * wi * consent);
+
+    const peak = ai > bi ? ai : bi;
+    denom = denom + (wi * consent * peak * SCALE);
   }
 
-  // Three SCALE factors went in (a, b, w); divide two back out to land the
-  // result on the same 0..SCALE*10 axis the bands are cut on.
-  const normalised = acc / ((SCALE as Uint<64>) * (SCALE as Uint<64>));
-  assert(normalised < 4294967296, "match: score overflow");
-  return normalised as Uint<32>;
+  // Bounds: raw <= 16 * 1000^3 = 1.6e10, and bandOf multiplies by AXIS to
+  // 1.6e14 - comfortably inside 64 bits, with the same headroom on denom.
+  return [raw, denom];
 }
 
 /// Prove a mutual match and publish only the band.
@@ -167,8 +198,8 @@ export circuit proveMatch(
   assert(modelCommitment(w) == activeModel, "match: unsanctioned model");
 
   // 3. Score under both consent masks.
-  const score = compatibility(a, b, w, localMask(), peerMask());
-  const band = bandOf(score);
+  const [raw, denom] = compatibility(a, b, w, localMask(), peerMask());
+  const band = bandOf(raw, denom);
   assert(band >= minBand, "match: below agreed threshold");
 
   // 4. One match per pair per epoch.

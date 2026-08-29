@@ -1,22 +1,37 @@
 import React, { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeInDown } from 'react-native-reanimated';
 import { GlowBackdrop } from '@/components/ui/GlowBackdrop';
+import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { Avatar } from '@/components/ui/Avatar';
 import { MetalButton } from '@/components/ui/MetalButton';
-import { Card, Chip, IconButton, ScreenHeader } from '@/components/ui/primitives';
+import { Badge, Card, IconButton, ScreenHeader } from '@/components/ui/primitives';
+import { FilterSheet, type FilterGroup, type FilterSelection } from '@/components/ui/FilterSheet';
+import { ProfileSheet } from '@/components/sheets/ProfileSheet';
+import { RequestsSheet, type ContactRequest } from '@/components/sheets/RequestsSheet';
 import { alpha, layout, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
 import { PEOPLE_BY_ID, WINKS, type Wink } from '@/data/people';
+import { useHalo } from '@/state/store';
+
+/*
+ * No entering animation on these rows.
+ *
+ * Tab screens are detached when inactive, so every return to this tab is a
+ * fresh mount and a staggered entrance replays in full. Once you have seen it
+ * twice it stops reading as polish and starts reading as the screen rebuilding
+ * itself on every switch - which is exactly what it is. Entrances are kept for
+ * screens you arrive at once (person, proof) and for on-demand surfaces like
+ * the radar's detail card.
+ */
 
 /**
  * Winkers - the two-column grid from the comps.
  *
- * The filter row is a real filter over a small set rather than decoration; with
- * six items it is arguably unnecessary, but it is the surface a judge reaches
- * for first to check whether the UI is wired or painted.
+ * Filtering lives in a bottom sheet rather than an inline chip row. With three
+ * independent axes an inline row would need eleven chips across the top of the
+ * screen, which is more chrome than content on a phone.
  */
 
 const KIND_LABEL: Record<Wink['kind'], string> = {
@@ -31,19 +46,87 @@ const KIND_ACTION: Record<Wink['kind'], string> = {
   'wants-chat': 'Reply',
 };
 
-type Filter = 'all' | Wink['kind'];
+const FILTER_GROUPS: FilterGroup[] = [
+  {
+    key: 'time',
+    label: 'By time',
+    options: [
+      { value: 'all', label: 'All' },
+      { value: 'today', label: 'Today' },
+      { value: 'yesterday', label: 'Yesterday' },
+      { value: 'older', label: 'Older' },
+    ],
+  },
+  {
+    key: 'interaction',
+    label: 'By interaction',
+    options: [
+      { value: 'all', label: 'All' },
+      { value: 'sent-wink', label: 'Sent a wink' },
+      { value: 'winked-back', label: 'Winked back' },
+      { value: 'wants-chat', label: 'Wants to chat' },
+    ],
+  },
+  {
+    key: 'status',
+    label: 'By status',
+    options: [
+      { value: 'all', label: 'All' },
+      { value: 'new', label: 'New' },
+      { value: 'read', label: 'Read' },
+      { value: 'active', label: 'Active now' },
+    ],
+  },
+];
+
+const DEFAULT_FILTERS: FilterSelection = { time: 'all', interaction: 'all', status: 'all' };
+
+/** Pending contact requests, as in the reference's "Incoming requests" sheet. */
+const REQUESTS: ContactRequest[] = [
+  { personId: 'tom', at: '10.03.2025' },
+  { personId: 'anna', at: '03.03.2025' },
+  { personId: 'michael', at: '12.03.2025' },
+  { personId: 'emma', at: '10.03.2025' },
+  { personId: 'nataly', at: '03.03.2025' },
+];
+
+/** Buckets a relative timestamp onto the sheet's time axis. */
+function timeBucket(at: string): 'today' | 'yesterday' | 'older' {
+  if (/m ago|now|h ago/.test(at)) return 'today';
+  if (/yesterday/i.test(at)) return 'yesterday';
+  return 'older';
+}
 
 export default function WinkersScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const [filter, setFilter] = useState<Filter>('all');
+
+  const { mask } = useHalo();
+  const [filters, setFilters] = useState<FilterSelection>(DEFAULT_FILTERS);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [requestsOpen, setRequestsOpen] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  const person = selected ? PEOPLE_BY_ID.get(selected) ?? null : null;
 
   const columnWidth = (width - space.xl * 2 - space.md) / 2;
 
+  const activeCount = Object.entries(filters).filter(([, v]) => v !== 'all').length;
+
   const visible = useMemo(
-    () => (filter === 'all' ? WINKS : WINKS.filter((w) => w.kind === filter)),
-    [filter],
+    () =>
+      WINKS.filter((wink) => {
+        if (filters.interaction !== 'all' && wink.kind !== filters.interaction) return false;
+        if (filters.time !== 'all' && timeBucket(wink.at) !== filters.time) return false;
+
+        if (filters.status === 'new' && !wink.unread) return false;
+        if (filters.status === 'read' && wink.unread) return false;
+        if (filters.status === 'active' && !PEOPLE_BY_ID.get(wink.personId)?.online) return false;
+
+        return true;
+      }),
+    [filters],
   );
 
   return (
@@ -60,41 +143,64 @@ export default function WinkersScreen() {
         <ScreenHeader
           title="Winkers"
           subtitle="People who winked or reached out"
-          right={<IconButton name="sliders" accessibilityLabel="Filters" />}
+          right={
+            <View style={styles.headerActions}>
+              <View>
+                <IconButton
+                  name="person"
+                  accessibilityLabel={`Incoming requests, ${REQUESTS.length} waiting`}
+                  onPress={() => setRequestsOpen(true)}
+                />
+                {REQUESTS.length > 0 ? <View style={styles.filterDot} /> : null}
+              </View>
+              <View>
+                <IconButton
+                  name="sliders"
+                  accessibilityLabel={
+                    activeCount > 0 ? `Filters, ${activeCount} active` : 'Filters'
+                  }
+                  onPress={() => setSheetOpen(true)}
+                />
+                {activeCount > 0 ? <View style={styles.filterDot} /> : null}
+              </View>
+            </View>
+          }
         />
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filters}
-        >
-          {(['all', 'sent-wink', 'winked-back', 'wants-chat'] as Filter[]).map((option) => (
-            <Chip
-              key={option}
-              label={option === 'all' ? 'All' : KIND_LABEL[option]}
-              selected={filter === option}
-              onPress={() => setFilter(option)}
-              style={styles.filterChip}
+        {activeCount > 0 ? (
+          <View style={styles.summary}>
+            <Badge
+              label={`${visible.length} of ${WINKS.length} shown`}
+              tone="violet"
+              icon="sliders"
             />
-          ))}
-        </ScrollView>
+            <MetalButton
+              label="Clear"
+              variant="ghost"
+              size="sm"
+              onPress={() => setFilters(DEFAULT_FILTERS)}
+            />
+          </View>
+        ) : null}
 
         <View style={styles.grid}>
-          {visible.map((wink, index) => {
+          {visible.map((wink) => {
             const person = PEOPLE_BY_ID.get(wink.personId);
             if (!person) return null;
 
             return (
-              <Animated.View
+              <Pressable
                 key={wink.personId}
-                entering={FadeInDown.delay(index * 55).duration(380)}
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${person.name}'s profile`}
+                onPress={() => setSelected(person.id)}
                 style={{ width: columnWidth }}
               >
                 <Card radius={radii.card} style={styles.tile} active={wink.unread}>
                   <View style={styles.tileHead}>
                     <Avatar
                       email={person.email}
-                      size={38}
+                      size={42}
                       online={person.online}
                       highlighted={wink.unread}
                     />
@@ -119,17 +225,49 @@ export default function WinkersScreen() {
                     style={styles.tileAction}
                   />
                 </Card>
-              </Animated.View>
+              </Pressable>
             );
           })}
         </View>
 
         {visible.length === 0 ? (
           <View style={styles.empty}>
-            <Text style={[type.callout, styles.emptyLabel]}>Nothing here yet.</Text>
+            <Text style={[type.callout, styles.emptyLabel]}>
+              Nothing matches those filters.
+            </Text>
+            <MetalButton
+              label="Clear filters"
+              variant="metal"
+              size="md"
+              onPress={() => setFilters(DEFAULT_FILTERS)}
+              style={styles.emptyAction}
+            />
           </View>
         ) : null}
       </ScrollView>
+
+      <ScrollScrim />
+
+      <ProfileSheet
+        person={person}
+        visible={person !== null}
+        onClose={() => setSelected(null)}
+        mask={mask}
+      />
+
+      <RequestsSheet
+        visible={requestsOpen}
+        onClose={() => setRequestsOpen(false)}
+        requests={REQUESTS}
+      />
+
+      <FilterSheet
+        visible={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        groups={FILTER_GROUPS}
+        value={filters}
+        onApply={setFilters}
+      />
     </View>
   );
 }
@@ -137,8 +275,26 @@ export default function WinkersScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: palette.void },
 
-  filters: { paddingHorizontal: space.xl, paddingBottom: space.lg },
-  filterChip: { marginRight: space.sm },
+  headerActions: { flexDirection: 'row', gap: space.sm },
+  filterDot: {
+    position: 'absolute',
+    top: -1,
+    right: -1,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: palette.violet,
+    borderWidth: 1.5,
+    borderColor: palette.void,
+  },
+
+  summary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: space.xl,
+    paddingBottom: space.lg,
+  },
 
   grid: {
     flexDirection: 'row',
@@ -146,17 +302,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.xl,
     gap: space.md,
   },
-  tile: { padding: space.md },
+  tile: { padding: space.lg, paddingTop: space.md },
   tileHead: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    // Centred rather than top-aligned: the timestamp reads as belonging to the
+    // person when it sits on the avatar's axis, and as floating when it does not.
+    alignItems: 'center',
     justifyContent: 'space-between',
   },
-  tileTime: { color: alpha.t38, marginTop: 3, marginLeft: space.sm },
-  tileName: { marginTop: space.md },
-  tileKind: { marginTop: 2 },
-  tileAction: { marginTop: space.md },
+  // `flexShrink` lets a long relative time ("Yesterday") give way to the avatar
+  // instead of forcing the row wider than the column.
+  tileTime: { color: alpha.t38, marginLeft: space.sm, flexShrink: 1, textAlign: 'right' },
+  tileName: { marginTop: space.lg },
+  tileKind: { marginTop: 3 },
+  tileAction: { marginTop: space.lg },
 
-  empty: { alignItems: 'center', paddingTop: space['4xl'] },
+  empty: { alignItems: 'center', paddingTop: space['4xl'], paddingHorizontal: space.xl },
   emptyLabel: { color: alpha.t38 },
+  emptyAction: { marginTop: space.xl },
 });

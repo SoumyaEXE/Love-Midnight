@@ -39,6 +39,7 @@
     "@babel/core": "^7.29.7",
     "@types/react": "~19.2.2",
     "babel-preset-expo": "^57.0.9",
+    "esbuild": "^0.28.2",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -46,8 +47,10 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:matching": "node scripts/check-matching.mjs",
+    "check": "tsc --noEmit && node scripts/check-tab-structure.mjs && node scripts/check-matching.mjs",
+    "check:tabs": "node scripts/check-tab-structure.mjs"
   },
   "private": true
 }
