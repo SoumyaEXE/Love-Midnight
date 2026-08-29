@@ -5,6 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { alpha, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
 import { MAP_HTML } from '@/components/map/mapDocument';
+import { cartoTileTemplate, mapConfig } from '@/config/map';
 import { BUCKET_REACH_M, ORIGIN, placeSubjects } from '@/components/map/placement';
 import { gravatarUrl } from '@/data/gravatar';
 import { DISTANCE_LABEL, type DistanceBucket } from '@/chain/midnight/types';
@@ -199,6 +200,10 @@ export function LeafletMap({
       <WebView
         ref={webview}
         source={{ html: MAP_HTML, baseUrl: 'https://halo.local/' }}
+        // Runs before the document's own scripts, so Leaflet builds its tile
+        // layer from the configured source on the first paint rather than
+        // showing a frame of the wrong basemap and swapping it.
+        injectedJavaScriptBeforeContentLoaded={TILE_BOOTSTRAP}
         originWhitelist={['*']}
         onMessage={onMessage}
         style={styles.web}
@@ -235,6 +240,17 @@ export function LeafletMap({
     </View>
   );
 }
+
+/**
+ * Hands the tile source to the page.
+ *
+ * Built through JSON.stringify rather than string concatenation: the token is
+ * opaque, and this value becomes source inside the WebView.
+ */
+const TILE_BOOTSTRAP = `window.__HALO_TILES = ${JSON.stringify({
+  url: cartoTileTemplate(),
+  attribution: mapConfig.attribution,
+})}; true;`;
 
 /** 500 -> "500 m", 1500 -> "1.5 km", 8000 -> "8 km". */
 function formatReach(metres: number): string {
