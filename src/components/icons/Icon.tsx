@@ -46,7 +46,6 @@ export type IconName =
   | 'key'
   | 'wallet'
   | 'link'
-  | 'sparkle'
   | 'bolt'
   | 'clock'
   | 'user-x'
@@ -300,14 +299,6 @@ function glyph(name: IconName, color: string, sw: number): React.ReactNode {
         <>
           <Path d="M10 14a4 4 0 015.66 0l2.84-2.84a4 4 0 10-5.66-5.66L10.5 8.2" />
           <Path d="M14 10a4 4 0 01-5.66 0L5.5 12.84a4 4 0 105.66 5.66L13.5 15.8" />
-        </>
-      );
-
-    case 'sparkle':
-      return (
-        <>
-          <Path d="M12 3.25l1.75 4.75L18.5 9.75l-4.75 1.75L12 16.25l-1.75-4.75L5.5 9.75l4.75-1.75z" />
-          <Path d="M18 15.5l.85 2.15L21 18.5l-2.15.85L18 21.5l-.85-2.15L15 18.5l2.15-.85z" />
         </>
       );
 

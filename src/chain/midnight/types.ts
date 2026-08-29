@@ -10,7 +10,7 @@
 export type Hex = `0x${string}`;
 
 /** Which circuit produced a proof. Drives the copy shown in the proof sheet. */
-export type ProofKind = 'proximity' | 'match' | 'credential';
+export type ProofKind = 'proximity' | 'match' | 'credential' | 'profile';
 
 export type ProofStatus = 'idle' | 'witnessing' | 'proving' | 'submitting' | 'settled' | 'failed';
 
@@ -46,7 +46,17 @@ export type Proof = {
   /** Public commitments the proof was made against. */
   inputs: { commitA: Hex; commitB?: Hex };
   /** The only thing the proof makes public. */
-  disclosed: { bucket?: DistanceBucket; band?: MatchBand; handle?: Hex };
+  disclosed: {
+    bucket?: DistanceBucket;
+    band?: MatchBand;
+    handle?: Hex;
+    /**
+     * Profile records only: the field names the user agreed to open against
+     * the commitment. Everything else stays sealed behind it, so this list is
+     * the literal, auditable answer to "what am I showing?".
+     */
+    shown?: string[];
+  };
   /** Replay guard. Stable for a given (pair, epoch). */
   nullifier: Hex;
   /** Proof bytes, base64. Large - held only while submitting. */

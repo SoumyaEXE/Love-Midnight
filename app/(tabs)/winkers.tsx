@@ -102,7 +102,7 @@ export default function WinkersScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
 
-  const { mask } = useHalo();
+  const { mask, selfVector } = useHalo();
   const [filters, setFilters] = useState<FilterSelection>(DEFAULT_FILTERS);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [requestsOpen, setRequestsOpen] = useState(false);
@@ -253,6 +253,7 @@ export default function WinkersScreen() {
         visible={person !== null}
         onClose={() => setSelected(null)}
         mask={mask}
+        selfVector={selfVector}
       />
 
       <RequestsSheet

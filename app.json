@@ -64,7 +64,9 @@
       "matchContract": null,
       "credentialContract": null,
       "solanaCluster": "https://api.devnet.solana.com",
-      "solanaProgram": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+      "solanaProgram": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+      "cartoApiKey": "eyJhbGciOiJIUzI1NiJ9.eyJhIjoiYWNfNDMyd2gxdG8iLCJqdGkiOiIyNmRmYTg4YyIsImV4cCI6MTc4ODYxOTk2NH0.MOGvkt_Sy2bNsdGpSlJAYpijQO5QjhUmKrtcZL6FZyc",
+      "cartoBasemap": "dark_all"
     }
   }
 }

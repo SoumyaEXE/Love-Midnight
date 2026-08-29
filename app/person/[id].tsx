@@ -7,13 +7,13 @@ import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { LiquidGlass } from '@/components/glass/LiquidGlass';
 import { Avatar } from '@/components/ui/Avatar';
 import { MetalButton } from '@/components/ui/MetalButton';
-import { Badge, Card, Chip, IconButton, SettingRow } from '@/components/ui/primitives';
+import { BandMeter, Card, Chip, IconButton, SettingRow } from '@/components/ui/primitives';
 import { Icon } from '@/components/icons/Icon';
 import { alpha, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
 import { explain, match } from '@/ai/matching';
 import { BAND_LABEL, DISTANCE_LABEL } from '@/chain/midnight/types';
-import { maskFor, PEOPLE_BY_ID, SELF_VECTOR, VECTORS } from '@/data/people';
+import { maskFor, PEOPLE_BY_ID, VECTORS } from '@/data/people';
 import { useHalo } from '@/state/store';
 
 /**
@@ -28,7 +28,7 @@ export default function PersonScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { mask, proveMatch } = useHalo();
+  const { mask, proveMatch, selfVector } = useHalo();
 
   const [proving, setProving] = useState(false);
   const person = id ? PEOPLE_BY_ID.get(id) : null;
@@ -37,8 +37,8 @@ export default function PersonScreen() {
     if (!person) return null;
     const peerVector = VECTORS.get(person.id);
     if (!peerVector) return null;
-    return match(SELF_VECTOR, peerVector, mask, maskFor(person));
-  }, [person, mask]);
+    return match(selfVector, peerVector, mask, maskFor(person));
+  }, [person, mask, selfVector]);
 
   /**
    * Proves the band actually achieved, rather than a fixed threshold.
@@ -108,9 +108,11 @@ export default function PersonScreen() {
         <View style={styles.section}>
           <Card radius={radii.card}>
             <View style={styles.matchHead}>
-              <Icon name="sparkle" size={19} color={palette.violet} />
-              <Text style={[type.title3, styles.matchTitle]}>{BAND_LABEL[result.band]}</Text>
-              <Badge label={`Band ${result.band}/4`} tone="violet" />
+              <View style={styles.matchHeadText}>
+                <Text style={type.eyebrow}>Compatibility</Text>
+                <Text style={[type.title3, styles.matchTitle]}>{BAND_LABEL[result.band]}</Text>
+              </View>
+              <BandMeter value={result.band} />
             </View>
 
             <Text style={[type.callout, styles.matchExplain]}>{explain(result)}</Text>
@@ -227,8 +229,9 @@ const styles = StyleSheet.create({
   section: { paddingHorizontal: space.xl, marginTop: space['2xl'] },
   sectionLabel: { marginBottom: space.md },
 
-  matchHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  matchTitle: { flex: 1 },
+  matchHead: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
+  matchHeadText: { flex: 1 },
+  matchTitle: { marginTop: 5 },
   matchExplain: { marginTop: space.md, lineHeight: 20 },
 
   drivers: { marginTop: space.lg, gap: space.md },

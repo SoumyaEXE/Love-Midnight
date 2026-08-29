@@ -3,14 +3,14 @@ import { StyleSheet, Text, View } from 'react-native';
 import { BottomSheet } from '@/components/ui/BottomSheet';
 import { Avatar } from '@/components/ui/Avatar';
 import { MetalButton } from '@/components/ui/MetalButton';
-import { Badge, Chip, Divider, SettingRow } from '@/components/ui/primitives';
+import { BandMeter, Chip, Divider, SettingRow } from '@/components/ui/primitives';
 import { Icon } from '@/components/icons/Icon';
 import { ReportSheet } from '@/components/sheets/ReportSheet';
-import { alpha, palette, space } from '@/theme/tokens';
+import { alpha, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
 import { explain, match } from '@/ai/matching';
 import { BAND_LABEL, DISTANCE_LABEL, type MatchBand } from '@/chain/midnight/types';
-import { maskFor, SELF_VECTOR, VECTORS, type Person } from '@/data/people';
+import { maskFor, VECTORS, type Person } from '@/data/people';
 
 /**
  * A person's profile, as a sheet.
@@ -31,6 +31,8 @@ export type ProfileSheetProps = {
   onClose: () => void;
   /** Consent mask of the signed-in user. */
   mask: number[];
+  /** The signed-in user's interest vector. Scored here, on this device. */
+  selfVector: number[];
   onWink?: (personId: string) => void;
   onProveMatch?: (personId: string, band: MatchBand) => void;
   winking?: boolean;
@@ -42,6 +44,7 @@ export function ProfileSheet({
   visible,
   onClose,
   mask,
+  selfVector,
   onWink,
   onProveMatch,
   winking = false,
@@ -53,8 +56,8 @@ export function ProfileSheet({
     if (!person) return null;
     const peerVector = VECTORS.get(person.id);
     if (!peerVector) return null;
-    return match(SELF_VECTOR, peerVector, mask, maskFor(person));
-  }, [person, mask]);
+    return match(selfVector, peerVector, mask, maskFor(person));
+  }, [person, mask, selfVector]);
 
   const close = useCallback(() => {
     setReporting(false);
@@ -81,7 +84,7 @@ export function ProfileSheet({
         }
       >
         <View style={styles.hero}>
-          <Avatar email={person.email} size={112} online={person.online} />
+          <Avatar email={person.email} size={92} online={person.online} />
           <Text style={[type.title1, styles.name]}>
             {person.name}, {person.age}
           </Text>
@@ -99,11 +102,11 @@ export function ProfileSheet({
         {result ? (
           <View style={styles.matchBlock}>
             <View style={styles.matchHead}>
-              <Icon name="sparkle" size={17} color={palette.violet} />
-              <Text style={[type.calloutStrong, styles.matchTitle]}>
-                {BAND_LABEL[result.band]}
-              </Text>
-              <Badge label={`Band ${result.band}/4`} tone="violet" />
+              <View style={styles.matchHeadText}>
+                <Text style={type.eyebrow}>Compatibility</Text>
+                <Text style={[type.title3, styles.matchTitle]}>{BAND_LABEL[result.band]}</Text>
+              </View>
+              <BandMeter value={result.band} />
             </View>
             <Text style={[type.caption, styles.matchExplain]}>{explain(result)}</Text>
 
@@ -155,24 +158,28 @@ export function ProfileSheet({
         </View>
       </BottomSheet>
 
-      <ReportSheet
-        person={person}
-        visible={reporting}
-        onClose={() => setReporting(false)}
-        onSubmitted={close}
-      />
+      {/* Mounted on demand. Two Modals standing by for every profile is two
+          native containers to present, and that cost lands on the open. */}
+      {reporting ? (
+        <ReportSheet
+          person={person}
+          visible={reporting}
+          onClose={() => setReporting(false)}
+          onSubmitted={close}
+        />
+      ) : null}
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  hero: { alignItems: 'center', paddingTop: space.sm },
-  name: { marginTop: space.lg },
-  bio: { marginTop: space.md, textAlign: 'center' },
+  hero: { alignItems: 'center' },
+  name: { marginTop: space.md },
+  bio: { marginTop: space.sm, textAlign: 'center', lineHeight: 20 },
   area: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: space.lg,
+    marginTop: space.md,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 999,
@@ -182,23 +189,27 @@ const styles = StyleSheet.create({
   },
   areaLabel: { marginLeft: 6, color: alpha.t56 },
 
+  // Neutral, like every other block on the sheet. The violet wash made this
+  // one panel shout for attention it had not earned; the accent now lives only
+  // where it carries meaning, on the meter and on the action.
   matchBlock: {
-    marginTop: space['2xl'],
+    marginTop: space.xl,
     padding: space.lg,
-    borderRadius: 18,
-    backgroundColor: 'rgba(168,85,247,0.10)',
+    borderRadius: radii.lg,
+    backgroundColor: 'rgba(255,255,255,0.045)',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(168,85,247,0.24)',
+    borderColor: alpha.t08,
   },
-  matchHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  matchTitle: { flex: 1 },
+  matchHead: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
+  matchHeadText: { flex: 1 },
+  matchTitle: { marginTop: 5 },
   matchExplain: { marginTop: space.sm, lineHeight: 18 },
   matchAction: { marginTop: space.lg },
   noProof: { marginTop: space.md, lineHeight: 17 },
 
-  sectionLabel: { marginTop: space['2xl'], marginBottom: space.md },
+  sectionLabel: { marginTop: space.xl, marginBottom: space.md },
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
 
-  divider: { marginVertical: space.xl },
+  divider: { marginVertical: space.lg },
   actions: { gap: space.sm },
 });

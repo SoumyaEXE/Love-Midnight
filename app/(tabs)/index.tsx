@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlowBackdrop } from '@/components/ui/GlowBackdrop';
 import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { LiquidGlass } from '@/components/glass/LiquidGlass';
-import { PrivacyMap } from '@/components/map/PrivacyMap';
+import { LeafletMap } from '@/components/map/LeafletMap';
 import { Avatar } from '@/components/ui/Avatar';
 import { MetalButton } from '@/components/ui/MetalButton';
 import { Badge, Chip, PressableCard } from '@/components/ui/primitives';
@@ -36,19 +36,23 @@ export default function HomeScreen() {
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const { visibility, setVisibility, proveProximity, proveMatch, mask } = useHalo();
+  const { visibility, setVisibility, proveProximity, proveMatch, mask, selfVector } = useHalo();
 
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<'wink' | 'match' | null>(null);
+  // A pan on the map and a scroll of the page are the same gesture. While a
+  // finger is down on the map the page holds still, or the map is undraggable.
+  const [mapHeld, setMapHeld] = useState(false);
 
   const mapWidth = width - space.xl * 2;
   // Slightly taller than wide, the way a plan view wants to be.
-  const mapHeight = Math.min(mapWidth * 1.12, 470);
+  const mapHeight = Math.min(mapWidth * 1.18, 500);
 
   const subjects = useMemo(
     () =>
       PEOPLE.filter((p) => p.id !== 'sophie').map((p) => ({
         id: p.id,
+        name: p.name,
         email: p.email,
         bucket: p.bucket,
         online: p.online,
@@ -122,6 +126,7 @@ export default function HomeScreen() {
           },
         ]}
         showsVerticalScrollIndicator={false}
+        scrollEnabled={!mapHeld}
       >
         <View style={styles.header}>
           <View style={styles.headerText}>
@@ -172,24 +177,19 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.mapWrap}>
-          <PrivacyMap
+          <LeafletMap
             width={mapWidth}
             height={mapHeight}
             subjects={subjects}
             selectedId={selected}
             maxBucket={visibility.maxBucket}
-            live={visibility.live && isFocused}
+            // A sheet over the map means the map is not being looked at. Its
+            // pulse is still costing frames underneath, and those frames are
+            // the ones the sheet needs to spring up smoothly.
+            live={visibility.live && isFocused && selected === null}
             onSelect={setSelected}
+            onInteractionChange={setMapHeld}
           />
-        </View>
-
-        {/* States plainly what the markers mean. Without this a viewer reads
-            them as pins, which is precisely the wrong conclusion. */}
-        <View style={styles.legend}>
-          <Icon name="shield-check" size={13} color={palette.violet} />
-          <Text style={[type.caption, styles.legendLabel]}>
-            Each circle is a proved area, not a location. Nobody’s position is known.
-          </Text>
         </View>
 
         <Text style={[type.eyebrow, styles.distanceLabel]}>Distance</Text>
@@ -269,6 +269,7 @@ export default function HomeScreen() {
         visible={person !== null}
         onClose={() => setSelected(null)}
         mask={mask}
+        selfVector={selfVector}
         onWink={(id) => void onWink(id)}
         onProveMatch={(id, band) => void onProveMatch(id, band)}
         winking={busy === 'wink'}
@@ -301,16 +302,12 @@ const styles = StyleSheet.create({
   visibilityLabel: { marginLeft: 8, color: alpha.t72 },
   visibilityChevron: { marginLeft: 10 },
 
-  mapWrap: { alignItems: 'center', marginTop: space['2xl'], zIndex: 1 },
-
-  legend: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginTop: space.lg,
+  mapWrap: {
+    alignItems: 'center',
+    marginTop: space['2xl'],
     marginBottom: space['2xl'],
-    zIndex: 2,
+    zIndex: 1,
   },
-  legendLabel: { flex: 1, marginLeft: 7, lineHeight: 17 },
 
   distanceLabel: { marginBottom: space.md, zIndex: 2 },
   chips: { paddingRight: space.xl, zIndex: 2 },

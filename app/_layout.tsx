@@ -63,6 +63,7 @@ export default function RootLayout() {
                 options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
               />
               <Stack.Screen name="privacy" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="profile-edit" options={{ animation: 'slide_from_right' }} />
             </Stack>
           </View>
         </HaloProvider>

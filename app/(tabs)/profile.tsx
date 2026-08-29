@@ -8,7 +8,7 @@ import { ScrollScrim } from '@/components/ui/ScrollScrim';
 import { LiquidGlass } from '@/components/glass/LiquidGlass';
 import { Avatar } from '@/components/ui/Avatar';
 import { MetalButton } from '@/components/ui/MetalButton';
-import { Badge, Card, Divider, SectionLabel, SettingRow } from '@/components/ui/primitives';
+import { Badge, Card, Chip, Divider, SectionLabel, SettingRow } from '@/components/ui/primitives';
 import { Icon } from '@/components/icons/Icon';
 import { alpha, layout, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
@@ -16,6 +16,7 @@ import { DIMENSIONS, SENSITIVE_BY_DEFAULT, type Dimension } from '@/ai/matching'
 import { PROOF_LABEL } from '@/chain/midnight/prover';
 import { SELF } from '@/data/people';
 import { useHalo } from '@/state/store';
+import { GENDER_LABEL, SHOWABLE, SHOWABLE_COPY, isComplete } from '@/state/profile';
 
 /**
  * Profile, doubling as the privacy dashboard.
@@ -29,8 +30,18 @@ import { useHalo } from '@/state/store';
 export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { wallet, connect, disconnect, proofs, mask, toggleDimension, vectorCommit, liveProver } =
-    useHalo();
+  const {
+    wallet,
+    connect,
+    disconnect,
+    proofs,
+    mask,
+    toggleDimension,
+    vectorCommit,
+    liveProver,
+    profile,
+    profileCommit,
+  } = useHalo();
 
   const [copied, setCopied] = useState(false);
 
@@ -42,6 +53,8 @@ export default function ProfileScreen() {
   }, [wallet.address]);
 
   const openDimensions = mask.filter(Boolean).length;
+  const hasProfile = isComplete(profile);
+  const shownFields = SHOWABLE.filter((field) => profile.show[field]);
 
   return (
     <View style={styles.root}>
@@ -55,10 +68,18 @@ export default function ProfileScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.hero}>
-          <Avatar email={SELF.email} size={96} />
+          <Avatar email={SELF.email} size={96} online={profile.show.presence} />
           <Text style={[type.title1, styles.name]}>
-            {SELF.name}, {SELF.age}
+            {hasProfile ? profile.name : SELF.name}
+            {(hasProfile ? profile.show.age && profile.age : true)
+              ? `, ${hasProfile ? profile.age : SELF.age}`
+              : ''}
           </Text>
+          {hasProfile && profile.show.gender && profile.gender ? (
+            <Text style={[type.callout, styles.heroGender]}>
+              {GENDER_LABEL[profile.gender]}
+            </Text>
+          ) : null}
           <View style={styles.heroBadges}>
             <Badge label="Adult, proved" tone="violet" icon="shield-check" />
             <Badge
@@ -67,6 +88,69 @@ export default function ProfileScreen() {
               icon="cube"
             />
           </View>
+        </View>
+
+        {/* Your card, exactly as a peer sees it. The disclosure toggles are
+            abstract until you can look at their result. */}
+        <SectionLabel>Your card</SectionLabel>
+        <View style={styles.section}>
+          <Card radius={radii.card}>
+            {hasProfile ? (
+              <>
+                {profile.show.bio && profile.bio ? (
+                  <Text style={[type.bodyLight, styles.cardBio]}>{profile.bio}</Text>
+                ) : (
+                  <Text style={[type.callout, styles.cardMuted]}>
+                    {profile.bio ? 'Your bio is hidden.' : 'No bio yet.'}
+                  </Text>
+                )}
+
+                {profile.show.interests && profile.interests.length ? (
+                  <View style={styles.cardTags}>
+                    {profile.interests.map((tag) => (
+                      <Chip key={tag} label={tag} />
+                    ))}
+                  </View>
+                ) : profile.interests.length ? (
+                  <Text style={[type.caption, styles.cardMuted]}>
+                    {profile.interests.length} interests hidden — still scored, never listed.
+                  </Text>
+                ) : null}
+
+                <Divider style={styles.divider} />
+
+                <Text style={type.eyebrow}>Visible to others</Text>
+                <Text style={[type.caption, styles.cardShown]}>
+                  {shownFields.length
+                    ? shownFields.map((field) => SHOWABLE_COPY[field].title).join(' · ')
+                    : 'Name only'}
+                </Text>
+              </>
+            ) : (
+              <Text style={[type.callout, styles.cardMuted]}>
+                You have not filled in a profile yet. Matching runs on a placeholder until you do.
+              </Text>
+            )}
+          </Card>
+
+          <SettingRow
+            icon="person"
+            title={hasProfile ? 'Edit profile' : 'Set up your profile'}
+            subtitle="Answers, interests, and what each person can see"
+            onPress={() => router.push('/profile-edit')}
+          />
+
+          {profileCommit ? (
+            <Card radius={radii.lg} style={styles.commit}>
+              <Text style={type.eyebrow}>Profile commitment</Text>
+              <Text style={[type.digest, styles.commitValue]} numberOfLines={1}>
+                {truncate(profileCommit, 10, 8)}
+              </Text>
+              <Text style={[type.caption, styles.commitNote]}>
+                On Midnight. Covers your answers and the list above — change either and it moves.
+              </Text>
+            </Card>
+          ) : null}
         </View>
 
         {/* Wallet */}
@@ -176,7 +260,7 @@ export default function ProfileScreen() {
               {proofs.slice(0, 6).map((proof) => (
                 <View key={proof.id}>
                   <SettingRow
-                    icon={proof.kind === 'proximity' ? 'pin' : proof.kind === 'match' ? 'sparkle' : 'fingerprint'}
+                    icon={proof.kind === 'proximity' ? 'pin' : proof.kind === 'match' ? 'wink' : 'fingerprint'}
                     tone="violet"
                     title={`${PROOF_LABEL[proof.kind]} proved`}
                     subtitle={`${proof.provingMs} ms · ${proof.simulated ? 'local prover' : 'proof server'}`}
@@ -256,6 +340,11 @@ const styles = StyleSheet.create({
 
   hero: { alignItems: 'center', paddingHorizontal: space.xl },
   name: { marginTop: space.lg },
+  heroGender: { marginTop: 4 },
+  cardBio: { lineHeight: 21 },
+  cardMuted: { color: alpha.t38, lineHeight: 20 },
+  cardTags: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.lg },
+  cardShown: { marginTop: 4, color: alpha.t72 },
   heroBadges: { flexDirection: 'row', gap: space.sm, marginTop: space.md },
 
   section: { paddingHorizontal: space.xl, gap: space.md },

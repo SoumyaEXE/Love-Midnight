@@ -27,8 +27,10 @@ const DOMAIN = {
   cell: 'halo:cell:v1',
   vector: 'halo:vec:v1',
   model: 'halo:model:v1',
+  profile: 'halo:profile:v1',
   proximityNullifier: 'halo:prox-null:v1',
   matchNullifier: 'halo:match-null:v1',
+  profileNullifier: 'halo:profile-null:v1',
 } as const;
 
 async function sha256(input: string): Promise<Hex> {
@@ -78,6 +80,19 @@ export function vectorCommitment(vector: number[], salt: Hex): Promise<Hex> {
 
 export function modelCommitment(weights: number[]): Promise<Hex> {
   return sha256(`${DOMAIN.model}|${weights.join(',')}`);
+}
+
+/**
+ * Commits to a whole profile record.
+ *
+ * The commitment covers the answers *and* the audience: change what you show
+ * and the commitment moves, which is what makes the disclosure list something
+ * a peer can check rather than something the client promises. `canonical`
+ * comes from `canonicalise` in state/profile, which fixes field order so an
+ * unchanged profile never rotates its commitment.
+ */
+export function profileCommitment(canonical: string, salt: Hex): Promise<Hex> {
+  return sha256(`${DOMAIN.profile}|${salt}|${canonical}`);
 }
 
 export function proximityNullifier(a: Hex, b: Hex, epoch: number): Promise<Hex> {
@@ -180,7 +195,8 @@ export function bandOf(score: number): MatchBand {
 export type ProveRequest =
   | { kind: 'proximity'; witness: ProximityWitness; commitA: Hex; commitB: Hex; maxBucket: DistanceBucket }
   | { kind: 'match'; witness: MatchWitness; commitA: Hex; commitB: Hex; minBand: MatchBand }
-  | { kind: 'credential'; birthYear: number; subject: Hex; salt: Hex };
+  | { kind: 'credential'; birthYear: number; subject: Hex; salt: Hex }
+  | { kind: 'profile'; canonical: string; salt: Hex; commitA: Hex; shown: string[] };
 
 export type ProveOptions = {
   epoch?: number;
@@ -260,7 +276,7 @@ async function proveSimulated(
 ): Promise<Proof> {
   await assertSatisfiable(request);
 
-  const cost = { proximity: 1400, match: 2600, credential: 1900 }[request.kind];
+  const cost = { proximity: 1400, match: 2600, credential: 1900, profile: 1100 }[request.kind];
   await new Promise((resolve) => setTimeout(resolve, cost - Math.min(Date.now() - witnessMs, 400)));
 
   const nullifier = await nullifierOf(request, epoch);
@@ -314,12 +330,20 @@ async function assertSatisfiable(request: ProveRequest): Promise<void> {
     return;
   }
 
+  if (request.kind === 'profile') {
+    if ((await profileCommitment(request.canonical, request.salt)) !== request.commitA) {
+      throw new Error('profile: bad opening');
+    }
+    return;
+  }
+
   const age = new Date().getFullYear() - request.birthYear;
   if (age < 18) throw new Error('credential: under 18');
 }
 
 function publicInputsOf(request: ProveRequest): Proof['inputs'] {
   if (request.kind === 'credential') return { commitA: request.subject };
+  if (request.kind === 'profile') return { commitA: request.commitA };
   return { commitA: request.commitA, commitB: request.commitB };
 }
 
@@ -342,6 +366,7 @@ async function disclosedOf(request: ProveRequest): Promise<Proof['disclosed']> {
       ),
     };
   }
+  if (request.kind === 'profile') return { shown: request.shown };
   return { handle: await sha256(`halo:person:v1|${request.subject}`) };
 }
 
@@ -351,6 +376,9 @@ function nullifierOf(request: ProveRequest, epoch: number): Promise<Hex> {
   }
   if (request.kind === 'match') {
     return matchNullifier(request.commitA, request.commitB, epoch);
+  }
+  if (request.kind === 'profile') {
+    return sha256(`${DOMAIN.profileNullifier}|${request.commitA}|${epoch}`);
   }
   return sha256(`halo:person:v1|${request.subject}`);
 }
@@ -364,4 +392,5 @@ export const PROOF_LABEL: Record<ProofKind, string> = {
   proximity: 'Proximity',
   match: 'Compatibility',
   credential: 'Personhood',
+  profile: 'Profile record',
 };

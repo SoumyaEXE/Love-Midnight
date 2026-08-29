@@ -1,10 +1,17 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { defaultMask, DIMENSIONS, MODEL_WEIGHTS, type Dimension } from '@/ai/matching';
+import {
+  buildVector,
+  defaultMask,
+  DIMENSIONS,
+  MODEL_WEIGHTS,
+  type Dimension,
+} from '@/ai/matching';
 import { resolveConnector, type Connector } from '@/chain/midnight/connector';
 import {
   cellCommitment,
   modelCommitment,
+  profileCommitment,
   prove,
   randomSalt,
   toCell,
@@ -13,6 +20,15 @@ import {
 import type { DistanceBucket, Hex, MatchBand, Proof, WalletState } from '@/chain/midnight/types';
 import { probeProofServer } from '@/chain/config';
 import { maskFor, PEOPLE_BY_ID, SELF, SELF_VECTOR, VECTORS } from '@/data/people';
+import {
+  canonicalise,
+  emptyProfile,
+  isComplete,
+  loadProfile,
+  persistProfile,
+  SHOWABLE,
+  type HaloProfile,
+} from '@/state/profile';
 
 /**
  * Application state.
@@ -56,6 +72,22 @@ export type HaloState = {
   mask: number[];
   toggleDimension: (dimension: Dimension) => void;
 
+  /** The signed-in user's own profile. Answers plus audience. */
+  profile: HaloProfile;
+  saveProfile: (next: Partial<HaloProfile>) => void;
+  /** Commitment to the profile record. Null until one has been published. */
+  profileCommit: Hex | null;
+  /**
+   * Commits the profile on Midnight and records the receipt.
+   *
+   * The profile itself does not cross: what is published is a commitment, and
+   * the disclosed field list. The receipt then mirrors to Solana through the
+   * same bridge every other proof uses.
+   */
+  publishProfile: (onPhase?: PhaseHandler) => Promise<Proof>;
+  /** The interest vector the user is actually scored on. Never transmitted. */
+  selfVector: number[];
+
   proofs: Proof[];
   /** Runs the proximity circuit against a person in the roster. */
   proveProximity: (personId: string, onPhase?: PhaseHandler) => Promise<Proof>;
@@ -84,11 +116,17 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
     until: Date.now() + 30 * 60 * 1000,
   });
   const [mask, setMask] = useState<number[]>(defaultMask);
+  const [profile, setProfileState] = useState<HaloProfile>(emptyProfile);
+  const [profileCommit, setProfileCommit] = useState<Hex | null>(null);
 
   // Salts are generated once per session and never persisted. Rotating them on
   // every launch means yesterday's published commitments cannot be linked to
   // today's, even by an observer who logs every commitment the app has made.
-  const [salts] = useState(() => ({ vector: randomSalt(), cell: randomSalt() }));
+  const [salts] = useState(() => ({
+    vector: randomSalt(),
+    cell: randomSalt(),
+    profile: randomSalt(),
+  }));
 
   const [vectorCommit, setVectorCommit] = useState<Hex | null>(null);
   const [cellCommit, setCellCommit] = useState<Hex | null>(null);
@@ -99,11 +137,14 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
     let alive = true;
 
     (async () => {
-      const [storedVisibility, storedMask] = await Promise.all([
+      const [storedVisibility, storedMask, storedProfile] = await Promise.all([
         AsyncStorage.getItem(KEY_VISIBILITY),
         AsyncStorage.getItem(KEY_MASK),
+        loadProfile(),
       ]);
       if (!alive) return;
+
+      if (storedProfile) setProfileState(storedProfile);
 
       if (storedVisibility) {
         try {
@@ -121,16 +162,12 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      const [vc, mc] = await Promise.all([
-        vectorCommitment(SELF_VECTOR, salts.vector),
-        modelCommitment(MODEL_WEIGHTS),
-      ]);
+      const mc = await modelCommitment(MODEL_WEIGHTS);
       // The demo pins a cell rather than reading GPS at boot; the location
       // screen swaps in the real fix once the user grants permission.
       const cc = await cellCommitment(toCell(40.7829, -73.9654), salts.cell);
 
       if (!alive) return;
-      setVectorCommit(vc);
       setModelCommit(mc);
       setCellCommit(cc);
 
@@ -145,6 +182,31 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
     };
   }, [salts]);
 
+  /**
+   * The vector actually scored against.
+   *
+   * Once the user has filled in a profile it is derived from their own bio and
+   * interests through the same vectoriser the roster runs through - the demo
+   * persona is only the stand-in for an account that has not been set up yet.
+   */
+  const selfVector = useMemo(
+    () => (isComplete(profile) ? buildVector(profile.bio, profile.interests) : SELF_VECTOR),
+    [profile],
+  );
+
+  // Re-commit whenever the vector moves. A stale commitment would make every
+  // match proof fail its opening check, which is a confusing way to discover
+  // that a bio was edited.
+  useEffect(() => {
+    let alive = true;
+    void vectorCommitment(selfVector, salts.vector).then((commit) => {
+      if (alive) setVectorCommit(commit);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [selfVector, salts.vector]);
+
   const setVisibility = useCallback((next: Partial<Visibility>) => {
     setVisibilityState((prev) => {
       const merged = { ...prev, ...next };
@@ -152,6 +214,21 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
       return merged;
     });
   }, []);
+
+  const saveProfile = useCallback((next: Partial<HaloProfile>) => {
+    setProfileState((prev) => {
+      const merged = { ...prev, ...next, show: { ...prev.show, ...(next.show ?? {}) } };
+      void persistProfile(merged);
+
+      // "Show my distance" and "broadcast a cell commitment" are the same
+      // decision wearing two names. Turning the disclosure off while the app
+      // keeps publishing commitments would make the toggle a lie, so it stops
+      // the broadcast too.
+      if (prev.show.area && !merged.show.area) setVisibility({ live: false });
+
+      return merged;
+    });
+  }, [setVisibility]);
 
   const toggleDimension = useCallback((dimension: Dimension) => {
     const index = DIMENSIONS.indexOf(dimension);
@@ -234,7 +311,7 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
         {
           kind: 'match',
           witness: {
-            vector: SELF_VECTOR,
+            vector: selfVector,
             salt: salts.vector,
             peerVector,
             peerSalt,
@@ -250,7 +327,37 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
       );
       return record(proof);
     },
-    [mask, record, salts.vector, vectorCommit],
+    [mask, record, salts.vector, selfVector, vectorCommit],
+  );
+
+  /**
+   * Writes the profile record to Midnight.
+   *
+   * What crosses the boundary is one hash and a list of field names. The
+   * answers stay here: a peer who later opens `bio` against this commitment
+   * learns the bio, and a peer who does not, does not - and neither can learn
+   * anything about the fields marked hidden, because there is nothing to open.
+   */
+  const publishProfile = useCallback(
+    async (onPhase?: PhaseHandler) => {
+      const canonical = canonicalise(profile);
+      const commit = await profileCommitment(canonical, salts.profile);
+
+      const proof = await prove(
+        {
+          kind: 'profile',
+          canonical,
+          salt: salts.profile,
+          commitA: commit,
+          shown: SHOWABLE.filter((field) => profile.show[field]),
+        },
+        { onPhase },
+      );
+
+      setProfileCommit(commit);
+      return record(proof);
+    },
+    [profile, record, salts.profile],
   );
 
   const value = useMemo<HaloState>(
@@ -266,6 +373,11 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
       setVisibility,
       mask,
       toggleDimension,
+      profile,
+      saveProfile,
+      profileCommit,
+      publishProfile,
+      selfVector,
       proofs,
       proveProximity: proveProximityFor,
       proveMatch: proveMatchFor,
@@ -284,6 +396,11 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
       setVisibility,
       mask,
       toggleDimension,
+      profile,
+      saveProfile,
+      profileCommit,
+      publishProfile,
+      selfVector,
       proofs,
       proveProximityFor,
       proveMatchFor,

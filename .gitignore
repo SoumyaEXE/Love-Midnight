@@ -18,6 +18,11 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
+# Local token overrides (EXPO_PUBLIC_CARTO_API_KEY, etc.)
+.env
+.env.*
+!.env.example
+
 # Metro
 .metro-health-check*
 

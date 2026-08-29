@@ -317,6 +317,45 @@ export function Badge({
   );
 }
 
+/**
+ * A match band, drawn as what it is.
+ *
+ * The band is an ordinal out of four, and a violet pill reading "Band 3/4"
+ * states that badly - it has the shape of a label when the content is a
+ * measurement, so it reads as decoration rather than as a number anyone
+ * computed. Four segments show the value and its ceiling at once, and the
+ * figure underneath is there for the case the segments are ambiguous.
+ */
+export function BandMeter({
+  value,
+  max = 4,
+  style,
+}: {
+  value: number;
+  max?: number;
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <View
+      style={[styles.meter, style]}
+      accessibilityRole="progressbar"
+      accessibilityValue={{ min: 0, max, now: value }}
+    >
+      <View style={styles.meterTrack}>
+        {Array.from({ length: max }, (_, index) => (
+          <View
+            key={index}
+            style={[styles.meterSegment, index < value && styles.meterSegmentOn]}
+          />
+        ))}
+      </View>
+      <Text style={[type.micro, styles.meterLabel]}>
+        {value} of {max}
+      </Text>
+    </View>
+  );
+}
+
 /** Round icon button. The header's search / options / close affordances. */
 export function IconButton({
   name,
@@ -388,6 +427,17 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: alpha.t14,
   },
+
+  meter: { alignItems: 'flex-end' },
+  meterTrack: { flexDirection: 'row', gap: 3 },
+  meterSegment: {
+    width: 5,
+    height: 18,
+    borderRadius: 1.5,
+    backgroundColor: alpha.t10,
+  },
+  meterSegmentOn: { backgroundColor: palette.violet },
+  meterLabel: { marginTop: 6, color: alpha.t38, letterSpacing: 0.3 },
 
   chip: {
     flexDirection: 'row',

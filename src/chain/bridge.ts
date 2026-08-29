@@ -59,10 +59,18 @@ export function encodeAttestation(proof: Proof): Attestation {
   };
 }
 
+/**
+ * Explicit, because the obvious shortcut is wrong: `kind[0]` collides
+ * 'proximity' and 'profile' on 'p', which would silently mislabel every
+ * mirrored profile record as a proximity proof.
+ */
+const KIND_TAG = { proximity: 'p', match: 'm', credential: 'c', profile: 'r' } as const;
+const TAG_KIND = { p: 'proximity', m: 'match', c: 'credential', r: 'profile' } as const;
+
 export function serialiseAttestation(attestation: Attestation): string {
   return [
     'halo1',
-    attestation.kind[0], // p | m | c
+    KIND_TAG[attestation.kind],
     attestation.nullifier.replace(/^0x/, '').slice(0, 64),
     attestation.disclosed.toString(16),
     attestation.at.toString(16),
@@ -73,9 +81,7 @@ export function parseAttestation(memo: string): Attestation | null {
   const parts = memo.split('.');
   if (parts.length !== 5 || parts[0] !== 'halo1') return null;
 
-  const kind = ({ p: 'proximity', m: 'match', c: 'credential' } as const)[
-    parts[1] as 'p' | 'm' | 'c'
-  ];
+  const kind = TAG_KIND[parts[1] as keyof typeof TAG_KIND];
   if (!kind) return null;
 
   return {
