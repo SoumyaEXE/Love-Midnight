@@ -1,25 +1,70 @@
 {
   "expo": {
-    "name": "Expo-Midnight",
-    "slug": "Expo-Midnight",
+    "name": "Halo",
+    "slug": "halo-midnight",
+    "scheme": "halo",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "backgroundColor": "#07060A",
+    "splash": {
+      "backgroundColor": "#07060A",
+      "resizeMode": "contain",
+      "image": "./assets/splash-icon.png"
+    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": false,
+      "bundleIdentifier": "in.automass.halo",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Halo proves you are near someone without ever sending your coordinates off this device.",
+        "UIViewControllerBasedStatusBarAppearance": true
+      }
     },
     "android": {
+      "package": "in.automass.halo",
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#07060A",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Halo proves you are near someone without ever sending your coordinates off this device."
+        }
+      ],
+      "expo-splash-screen"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "midnightIndexer": "https://indexer.testnet-02.midnight.network/api/v1/graphql",
+      "midnightProofServer": "http://127.0.0.1:6300",
+      "midnightNode": "https://rpc.testnet-02.midnight.network",
+      "proximityContract": null,
+      "matchContract": null,
+      "credentialContract": null,
+      "solanaCluster": "https://api.devnet.solana.com",
+      "solanaProgram": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
     }
   }
 }

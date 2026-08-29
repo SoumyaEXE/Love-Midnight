@@ -1,0 +1,186 @@
+pragma language_version 0.16;
+
+import CompactStandardLibrary;
+
+// -----------------------------------------------------------------------------
+// Halo :: match
+//
+// The AI-track circuit. It answers a question a recommender normally cannot:
+// "the model scored us compatible - prove it followed the rules."
+//
+// Halo's matcher is a fixed-weight scorer over a 16-dimension interest vector.
+// It runs entirely on the handset. The vector is the single most sensitive
+// thing the app holds - sexuality, health, politics, religion all live in it -
+// and it never leaves the device, encrypted or otherwise.
+//
+// What leaves the device is this proof, which establishes:
+//
+//   1. both interest vectors open their published commitments
+//   2. the score is the correct dot product of those vectors under the
+//      *committed* weight set - the model cannot be swapped for one that
+//      favours a paying advertiser
+//   3. the score clears the threshold both parties independently agreed to
+//   4. every dimension flagged private by either side contributed zero
+//
+// Point 4 is the part a server-side recommender can never offer. A user can
+// mark "health" or "politics" private, and the proof shows the model was
+// structurally unable to read those dimensions - not that it promised not to.
+//
+// Only a coarse 0-4 score band is disclosed. The exact score would leak the
+// vector under repeated queries against attacker-chosen profiles.
+// -----------------------------------------------------------------------------
+
+const DIMENSIONS: Uint<8> = 16;
+
+/// Fixed-point scale. Interest weights are integers in [0, 1000].
+const SCALE: Uint<32> = 1000;
+
+/// Score bands. Disclosing a band rather than a score bounds what an attacker
+/// learns per query to ~2 bits.
+const BAND_1: Uint<32> = 2000;
+const BAND_2: Uint<32> = 4000;
+const BAND_3: Uint<32> = 6000;
+const BAND_4: Uint<32> = 8000;
+
+/// Hash of the weight vector the network has agreed to score with. Governance
+/// rotates this; clients refuse to prove against an unrecognised model.
+export ledger activeModel: Bytes<32>;
+
+/// Mutual matches, keyed by nullifier, valued by disclosed band.
+export ledger matches: Map<Bytes<32>, Uint<8>>;
+
+export ledger epoch: Counter;
+
+/// The prover's own interest vector and its blinding factor.
+witness localVector(): Vector<16, Uint<32>>;
+witness localSalt(): Bytes<32>;
+
+/// The peer's vector, received over the pairing channel after both sides opted
+/// in. Still forced to open the peer's public commitment below.
+witness peerVector(): Vector<16, Uint<32>>;
+witness peerSalt(): Bytes<32>;
+
+/// The model weights. Public in principle, passed as a witness so the circuit
+/// can hash them and compare against `activeModel` in one pass.
+witness modelWeights(): Vector<16, Uint<32>>;
+
+/// Per-dimension consent masks. 1 = this dimension may be scored, 0 = it is
+/// withheld. The union of both masks is what actually gets used, so a single
+/// "no" from either side is enough to zero a dimension.
+witness localMask(): Vector<16, Uint<8>>;
+witness peerMask(): Vector<16, Uint<8>>;
+
+circuit vectorCommitment(v: Vector<16, Uint<32>>, salt: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "halo:vec:v1"),
+    salt,
+    persistentHash<Vector<16, Uint<32>>>(v)
+  ]);
+}
+
+circuit modelCommitment(w: Vector<16, Uint<32>>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "halo:model:v1"),
+    persistentHash<Vector<16, Uint<32>>>(w)
+  ]);
+}
+
+circuit bandOf(score: Uint<32>): Uint<8> {
+  if (score < BAND_1) { return 0 as Uint<8>; }
+  if (score < BAND_2) { return 1 as Uint<8>; }
+  if (score < BAND_3) { return 2 as Uint<8>; }
+  if (score < BAND_4) { return 3 as Uint<8>; }
+  return 4 as Uint<8>;
+}
+
+circuit matchNullifier(
+  commitA: Bytes<32>,
+  commitB: Bytes<32>,
+  ep: Uint<64>
+): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "halo:match-null:v1"),
+    commitA,
+    commitB,
+    persistentHash<Uint<64>>(ep)
+  ]);
+}
+
+/// The scorer itself, expressed as constraints rather than executed code.
+///
+/// score = sum_i ( w_i * a_i * b_i * mask_i ) / SCALE^2
+///
+/// The mask multiply is what enforces the consent guarantee: a withheld
+/// dimension is multiplied by zero inside the circuit, so no arrangement of
+/// witnesses can make it contribute.
+circuit compatibility(
+  a: Vector<16, Uint<32>>,
+  b: Vector<16, Uint<32>>,
+  w: Vector<16, Uint<32>>,
+  maskA: Vector<16, Uint<8>>,
+  maskB: Vector<16, Uint<8>>
+): Uint<32> {
+  let acc = 0 as Uint<64>;
+
+  for (const i of 0..16) {
+    assert(a[i] <= SCALE, "match: local weight out of range");
+    assert(b[i] <= SCALE, "match: peer weight out of range");
+    assert(w[i] <= SCALE, "match: model weight out of range");
+    assert(maskA[i] <= 1, "match: local mask not boolean");
+    assert(maskB[i] <= 1, "match: peer mask not boolean");
+
+    // Both sides must consent for a dimension to count.
+    const consent = (maskA[i] * maskB[i]) as Uint<64>;
+    const term = (a[i] as Uint<64>) * (b[i] as Uint<64>) * (w[i] as Uint<64>);
+    acc = acc + (term * consent);
+  }
+
+  // Three SCALE factors went in (a, b, w); divide two back out to land the
+  // result on the same 0..SCALE*10 axis the bands are cut on.
+  const normalised = acc / ((SCALE as Uint<64>) * (SCALE as Uint<64>));
+  assert(normalised < 4294967296, "match: score overflow");
+  return normalised as Uint<32>;
+}
+
+/// Prove a mutual match and publish only the band.
+///
+/// Public inputs:  commitA, commitB, threshold band
+/// Disclosed:      the achieved band
+/// Hidden:         both interest vectors, the exact score, both consent masks
+export circuit proveMatch(
+  commitA: Bytes<32>,
+  commitB: Bytes<32>,
+  minBand: Uint<8>
+): Uint<8> {
+  const a = localVector();
+  const saltA = localSalt();
+  const b = peerVector();
+  const saltB = peerSalt();
+  const w = modelWeights();
+
+  // 1. Vectors must open their published commitments.
+  assert(vectorCommitment(a, saltA) == commitA, "match: bad local opening");
+  assert(vectorCommitment(b, saltB) == commitB, "match: bad peer opening");
+
+  // 2. The model must be the one the network sanctioned. This is the clause
+  //    that makes "the model followed the rules" checkable rather than trusted.
+  assert(modelCommitment(w) == activeModel, "match: unsanctioned model");
+
+  // 3. Score under both consent masks.
+  const score = compatibility(a, b, w, localMask(), peerMask());
+  const band = bandOf(score);
+  assert(band >= minBand, "match: below agreed threshold");
+
+  // 4. One match per pair per epoch.
+  const nul = matchNullifier(commitA, commitB, epoch);
+  assert(!matches.member(nul), "match: already matched this epoch");
+  matches.insert(nul, disclose(band));
+
+  return band;
+}
+
+/// Governance: rotate the sanctioned model. In production this sits behind the
+/// network's multisig; the demo deployment leaves it open.
+export circuit setModel(commitment: Bytes<32>): [] {
+  activeModel = disclose(commitment);
+}

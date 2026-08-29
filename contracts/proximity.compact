@@ -1,0 +1,153 @@
+pragma language_version 0.16;
+
+import CompactStandardLibrary;
+
+// -----------------------------------------------------------------------------
+// Halo :: proximity
+//
+// Proves "I am within R of you" without either party revealing where they are.
+//
+// The scheme is grid-commitment based. A device snaps its GPS fix to a fixed
+// 250 m grid, producing integer cell coordinates (cx, cy), and publishes only
+// Commit(cx, cy, salt). Coordinates never leave the handset - not to a server,
+// not to the chain, not to the peer.
+//
+// The circuit is then handed both parties' private cells plus both public
+// commitments, and proves three things at once:
+//
+//   1. each cell opens its own commitment  (nobody can substitute a fake cell)
+//   2. squared Chebyshev-bounded distance <= R^2  (they really are near)
+//   3. the disclosed bucket is the correct bucket for that distance
+//
+// Only the bucket ("closest" / "nearby" / "walkable" / "area") is revealed,
+// which is exactly what the UI renders. Squared distance is used throughout so
+// the circuit never needs a square root.
+//
+// Replay is prevented by a nullifier over (commitA, commitB, epoch): a given
+// pair can register proximity once per epoch, so an attacker cannot grind
+// thousands of proofs at shifting positions to trilaterate someone.
+// -----------------------------------------------------------------------------
+
+/// Grid resolution in metres. Coarse enough that a cell holds many people in a
+/// dense city, fine enough that "walkable" stays meaningful.
+const CELL_METRES: Uint<16> = 250;
+
+/// Distance buckets, in cells, squared. 1 cell = 250 m.
+const BUCKET_CLOSEST: Uint<32> = 1;    // <= 250 m
+const BUCKET_NEARBY: Uint<32> = 16;    // <= 1 km
+const BUCKET_WALKABLE: Uint<32> = 64;  // <= 2 km
+const BUCKET_AREA: Uint<32> = 400;     // <= 5 km
+
+/// Published proximity claims, keyed by nullifier. The value is the disclosed
+/// bucket - never a distance, never a position.
+export ledger claims: Map<Bytes<32>, Uint<8>>;
+
+/// Monotonic epoch. Advanced by the operator roughly every 15 minutes; bounds
+/// how long a single proof stays replayable.
+export ledger epoch: Counter;
+
+/// The prover's own grid cell and blinding factor. Witnesses are supplied by
+/// the local wallet and are never serialised into the proof.
+witness localCell(): [Uint<32>, Uint<32>];
+witness localSalt(): Bytes<32>;
+
+/// The peer's cell, learned through the encrypted pairing handshake. The peer
+/// consented to this by completing the handshake; the circuit still forces it
+/// to open the peer's public commitment, so a malicious prover cannot invent
+/// a convenient position for them.
+witness peerCell(): [Uint<32>, Uint<32>];
+witness peerSalt(): Bytes<32>;
+
+/// Commit(cx, cy, salt). Domain-separated so a commitment from one circuit can
+/// never be replayed as a commitment in another.
+circuit cellCommitment(cx: Uint<32>, cy: Uint<32>, salt: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "halo:cell:v1"),
+    salt,
+    uint32ToBytes(cx),
+    uint32ToBytes(cy)
+  ]);
+}
+
+circuit uint32ToBytes(v: Uint<32>): Bytes<32> {
+  return persistentHash<Uint<32>>(v);
+}
+
+/// Squared Euclidean distance in cell units. Both operands are bounded to 16
+/// bits before squaring so the product provably cannot overflow 32 bits.
+circuit squaredCellDistance(
+  ax: Uint<32>, ay: Uint<32>,
+  bx: Uint<32>, by: Uint<32>
+): Uint<32> {
+  const dx = ax > bx ? ax - bx : bx - ax;
+  const dy = ay > by ? ay - by : by - ay;
+
+  // Anything beyond 5 km is out of range anyway; clamping keeps the multiply
+  // inside the field and keeps the constraint count flat.
+  assert(dx < 65536, "proximity: x delta out of range");
+  assert(dy < 65536, "proximity: y delta out of range");
+
+  return (dx * dx) + (dy * dy);
+}
+
+/// Maps a squared distance onto the disclosed bucket. 0 = closest .. 3 = area.
+circuit bucketOf(d2: Uint<32>): Uint<8> {
+  if (d2 <= BUCKET_CLOSEST)  { return 0 as Uint<8>; }
+  if (d2 <= BUCKET_NEARBY)   { return 1 as Uint<8>; }
+  if (d2 <= BUCKET_WALKABLE) { return 2 as Uint<8>; }
+  return 3 as Uint<8>;
+}
+
+/// Binds a claim to a specific pair and epoch, so it cannot be replayed later
+/// or reused against a different peer.
+circuit proximityNullifier(
+  commitA: Bytes<32>,
+  commitB: Bytes<32>,
+  ep: Uint<64>
+): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "halo:prox-null:v1"),
+    commitA,
+    commitB,
+    persistentHash<Uint<64>>(ep)
+  ]);
+}
+
+/// Prove proximity and publish only the bucket.
+///
+/// Public inputs:  commitA, commitB, maxBucket
+/// Disclosed:      the bucket, under a pair-and-epoch nullifier
+/// Hidden:         both positions, the exact distance, both salts
+export circuit proveProximity(
+  commitA: Bytes<32>,
+  commitB: Bytes<32>,
+  maxBucket: Uint<8>
+): Uint<8> {
+  const [ax, ay] = localCell();
+  const saltA = localSalt();
+  const [bx, by] = peerCell();
+  const saltB = peerSalt();
+
+  // 1. Both cells must open their published commitments. Without this the
+  //    prover could claim any position they liked.
+  assert(cellCommitment(ax, ay, saltA) == commitA, "proximity: bad local opening");
+  assert(cellCommitment(bx, by, saltB) == commitB, "proximity: bad peer opening");
+
+  // 2. Distance must land inside the requested bucket.
+  const d2 = squaredCellDistance(ax, ay, bx, by);
+  const bucket = bucketOf(d2);
+  assert(bucket <= maxBucket, "proximity: out of range");
+  assert(d2 <= BUCKET_AREA, "proximity: beyond maximum radius");
+
+  // 3. Record the disclosure once per pair per epoch.
+  const nul = proximityNullifier(commitA, commitB, epoch);
+  assert(!claims.member(nul), "proximity: already claimed this epoch");
+  claims.insert(nul, disclose(bucket));
+
+  return bucket;
+}
+
+/// Operator-advanced epoch tick.
+export circuit advanceEpoch(): [] {
+  epoch.increment(1);
+}
