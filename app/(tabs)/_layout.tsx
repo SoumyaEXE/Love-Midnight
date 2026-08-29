@@ -16,6 +16,7 @@ import { Icon, type IconName } from '@/components/icons/Icon';
 import { layout, motion, palette, radius as radii, space } from '@/theme/tokens';
 import { fontFamily } from '@/theme/typography';
 import { WINKS } from '@/data/people';
+import { useConversations } from '@/hooks/useConversations';
 
 /**
  * Floating glass tab bar, built on the headless `expo-router/ui` Tabs.
@@ -49,6 +50,10 @@ export default function TabsLayout() {
   const [barWidth, setBarWidth] = useState(0);
 
   const unread = WINKS.filter((w) => w.unread).length;
+  // Realtime, from the conversation index rather than from the messages
+  // themselves - the badge is exactly the sum the chat list already subscribes
+  // to, so it can never disagree with the rows underneath it.
+  const { unread: unreadMessages } = useConversations();
   const slotWidth = barWidth / TABS.length;
 
   /**
@@ -138,7 +143,13 @@ export default function TabsLayout() {
             <TabSlotButton
               icon={tab.icon}
               label={tab.label}
-              badge={tab.name === 'winkers' && unread > 0 ? unread : undefined}
+              badge={
+                tab.name === 'winkers' && unread > 0
+                  ? unread
+                  : tab.name === 'chat' && unreadMessages > 0
+                    ? unreadMessages
+                    : undefined
+              }
             />
           </TabTrigger>
         ))}

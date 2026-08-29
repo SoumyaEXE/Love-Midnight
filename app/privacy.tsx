@@ -15,6 +15,8 @@ import { alpha, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
 import { DISTANCE_LABEL, type DistanceBucket } from '@/chain/midnight/types';
 import { useHalo } from '@/state/store';
+import { useFirebase, type ConnectionState, type FirebaseError } from '@/state/firebase';
+import { formatRadius, RADIUS_CHOICES } from '@/firebase/geo';
 
 /**
  * Privacy & Safety.
@@ -48,7 +50,8 @@ const FILED_REPORTS: FiledReport[] = [
 export default function PrivacyScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { visibility, setVisibility, proofs } = useHalo();
+  const { visibility, setVisibility, discovery, setDiscovery, proofs } = useHalo();
+  const { connection, sharing, publishedAt, error, dismissError } = useFirebase();
 
   const [mirrorToSolana, setMirrorToSolana] = useState(false);
   const [allowCalls, setAllowCalls] = useState(false);
@@ -82,12 +85,16 @@ export default function PrivacyScreen() {
             <View style={styles.switchRow}>
               <View style={styles.switchText}>
                 <Text style={type.body}>Broadcasting</Text>
+                {/* One switch, because "am I publishing where I am?" and "may
+                    people find me?" are the same question. Off stops the
+                    location watch and removes the record - it does not merely
+                    stop refreshing it. */}
                 <Text style={[type.caption, styles.sub]}>
                   {visibility.live
                     ? minutesLeft
-                      ? `Publishing a cell commitment for ${minutesLeft} more minutes.`
-                      : 'Publishing a cell commitment.'
-                    : 'Nothing is being published. You are invisible.'}
+                      ? `Publishing a cell commitment and sharing your location for ${minutesLeft} more minutes.`
+                      : 'Publishing a cell commitment and sharing your location.'
+                    : 'Nothing is being published. Your location is off the server and nobody can find you.'}
                 </Text>
               </View>
               <Switch
@@ -127,8 +134,57 @@ export default function PrivacyScreen() {
                 onPress={() => setVisibility({ live: true, until: null })}
               />
             </View>
+
+            <LocationStatus
+              live={visibility.live}
+              sharing={sharing}
+              connection={connection}
+              publishedAt={publishedAt}
+            />
           </Card>
         </View>
+
+        <SectionLabel>Discovery</SectionLabel>
+        <View style={styles.section}>
+          <Card radius={radii.card}>
+            <Text style={type.body}>How far you look</Text>
+            <Text style={[type.caption, styles.sub]}>
+              People inside this radius appear on your radar. Distance is measured on this
+              device from their published position - you are never shown coordinates, and
+              they are never shown yours.
+            </Text>
+
+            <View style={[styles.chips, styles.radiusChips]}>
+              {RADIUS_CHOICES.map((meters) => (
+                <Chip
+                  key={meters}
+                  label={formatRadius(meters)}
+                  selected={discovery.radius === meters}
+                  onPress={() => setDiscovery({ radius: meters })}
+                />
+              ))}
+            </View>
+          </Card>
+        </View>
+
+        {error ? (
+          <View style={styles.section}>
+            <Card radius={radii.card}>
+              <Text style={[type.calloutStrong, styles.problemTitle]}>
+                {PROBLEM_TITLE[error.kind]}
+              </Text>
+              <Text style={[type.caption, styles.sub]}>{problemBody(error)}</Text>
+              <MetalButton
+                label="Dismiss"
+                variant="ghost"
+                size="md"
+                fullWidth
+                onPress={dismissError}
+                style={styles.dismiss}
+              />
+            </Card>
+          </View>
+        ) : null}
 
         <SectionLabel>Cross-chain</SectionLabel>
         <View style={styles.section}>
@@ -211,6 +267,79 @@ export default function PrivacyScreen() {
   );
 }
 
+/**
+ * What the location pipeline is actually doing, in one line.
+ *
+ * Worth the space because every other control on this card states an
+ * *intention* - broadcast on, this radius, that bucket - and none of them can
+ * tell you whether a position has left the device. Permission can be refused,
+ * the socket can be down, and a fix can simply not have arrived yet; all three
+ * look identical from a switch in the on position.
+ */
+function LocationStatus({
+  live,
+  sharing,
+  connection,
+  publishedAt,
+}: {
+  live: boolean;
+  sharing: boolean;
+  connection: ConnectionState;
+  publishedAt: number | null;
+}) {
+  const tone = !live ? alpha.t38 : sharing && connection === 'online' ? palette.positive : palette.negative;
+
+  const label = !live
+    ? 'Location sharing off'
+    : connection === 'offline'
+      ? 'Offline - queued until the connection returns'
+      : connection === 'error'
+        ? 'Could not reach the realtime database'
+        : !sharing
+          ? 'Waiting for location permission'
+          : publishedAt
+            ? `Position published ${Math.max(0, Math.round((Date.now() - publishedAt) / 60_000))} min ago`
+            : 'Waiting for a fix';
+
+  return (
+    <View style={styles.status}>
+      <View style={[styles.statusDot, { backgroundColor: tone }]} />
+      <Text style={[type.caption, styles.statusLabel]}>{label}</Text>
+    </View>
+  );
+}
+
+const PROBLEM_TITLE: Record<FirebaseError['kind'], string> = {
+  auth: 'Realtime session unavailable',
+  permission: 'Write refused',
+  location: 'Location unavailable',
+  network: 'Connection problem',
+};
+
+/**
+ * User-facing copy for a failure.
+ *
+ * Raw Firebase messages are for the console, not for a person deciding whether
+ * to grant a permission - `PERMISSION_DENIED at /locations/...` says nothing
+ * actionable. Each case says what stopped and what to do about it.
+ */
+function problemBody(error: FirebaseError): string {
+  switch (error.kind) {
+    case 'location':
+      return error.reason === 'permission-denied'
+        ? 'Halo needs location permission to publish a position. Nothing is being shared until it is granted in system settings.'
+        : error.reason === 'unavailable'
+          ? 'The device could not produce a fix. This is usually indoors or with location services switched off.'
+          : 'Your position could not be saved. It will be retried on the next update.';
+    case 'auth':
+      return 'Realtime features are unavailable on this device. Everything on-chain still works; nearby people and chat do not.';
+    case 'permission':
+      return error.message;
+    default:
+      return error.message;
+  }
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: palette.void },
 
@@ -227,4 +356,20 @@ const styles = StyleSheet.create({
   stat: { marginTop: space.lg, color: palette.violet },
   explainer: { lineHeight: 20 },
   reset: { marginTop: space.xl },
+
+  radiusChips: { marginTop: space.lg },
+
+  status: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: space.xl,
+    paddingTop: space.lg,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: alpha.t08,
+  },
+  statusDot: { width: 7, height: 7, borderRadius: 3.5, marginRight: space.sm },
+  statusLabel: { flex: 1, color: alpha.t56 },
+
+  problemTitle: { color: palette.negative },
+  dismiss: { marginTop: space.lg },
 });

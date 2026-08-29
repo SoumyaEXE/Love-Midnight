@@ -1,0 +1,202 @@
+{
+  // Halo / MIDN8 - Realtime Database rules.
+  //
+  // Deploy with:  firebase deploy --only database
+  //
+  // The whole scheme rests on one binding. The application's identity is a
+  // wallet address, but a wallet address in a write is a *claim* - the database
+  // has no way to check it. `auth.uid`, from anonymous sign-in, is the one value
+  // a client cannot forge, so the address is bound to a uid once, in
+  // `users/{wallet}/owner`, by a rule that lets the field be created and never
+  // rewritten. Every other rule here reduces to "does the caller own this
+  // wallet?".
+  //
+  // `owners/{uid}` is the reverse edge, and it exists so a rule can turn
+  // `auth.uid` into a wallet and use it as a path segment - which is what makes
+  // "only a participant may read this conversation" expressible at all. It is
+  // never trusted alone: every rule that reads it also checks the forward edge
+  // agrees, so a forged reverse entry resolves to nothing.
+  //
+  // On `locations`, and what is actually in it: not a fix. The client snaps
+  // every position to the app's 250 m grid before publishing, so the stored
+  // coordinate is the centre of a square that everyone standing in it shares,
+  // and the only place-name is a city and region ("Kolkata, West Bengal")
+  // geocoded on the publisher's own device. The node is readable by any
+  // signed-in client through an indexed geohash range - that is what makes
+  // client-side proximity search possible - and the `query.orderByChild`
+  // constraint below stops a plain dump of it, but a determined client could
+  // still walk the index. What that walk yields is a set of 250 m cells and
+  // city names, which is the exposure this design accepts deliberately.
+  //
+  // The snapping itself is not verifiable here and is not claimed to be: the
+  // longitude grid is scaled by cos(latitude) and the rules language has no
+  // trigonometry. What the rules do enforce is that `accuracy` can never be
+  // reported as finer than the grid, so no record can *advertise* precision it
+  // is not allowed to have - and that a client may only ever write its own
+  // position, so the residual risk is a user over-sharing themselves.
+
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    // -----------------------------------------------------------------------
+    // uid -> wallet. Write-once, self only, and only for a wallet that is
+    // either unclaimed or already ours.
+    // -----------------------------------------------------------------------
+    "owners": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid && !data.exists()",
+        ".validate": "newData.isString() && newData.val().length > 0 && (!root.child('users').child(newData.val()).child('owner').exists() || root.child('users').child(newData.val()).child('owner').val() === auth.uid)"
+      }
+    },
+
+    // -----------------------------------------------------------------------
+    // The user record. Readable by any signed-in client - this is the card
+    // discovery draws. What is *in* it is already the filtered projection: a
+    // field the user withheld is absent from the write, not hidden on read.
+    // -----------------------------------------------------------------------
+    "users": {
+      ".read": "auth != null",
+
+      "$wallet": {
+        ".write": "auth != null && (root.child('users').child($wallet).child('owner').val() === auth.uid || (!root.child('users').child($wallet).child('owner').exists() && newData.child('owner').val() === auth.uid))",
+
+        "owner": {
+          ".validate": "newData.isString() && newData.val() === auth.uid && !data.exists()"
+        },
+
+        "profile": {
+          ".validate": "newData.hasChild('name')",
+          "name": { ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 60" },
+          "age": { ".validate": "newData.isNumber() && newData.val() >= 18 && newData.val() <= 120" },
+          "gender": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "bio": { ".validate": "newData.isString() && newData.val().length <= 600" },
+          "interests": { ".validate": "newData.hasChildren()" },
+          "avatar": { ".validate": "newData.isString() && newData.val().length <= 120" },
+          "updatedAt": { ".validate": "newData.isNumber()" },
+          "$other": { ".validate": false }
+        },
+
+        "verification": {
+          "adult": { ".validate": "newData.isBoolean()" },
+          "at": { ".validate": "newData.isNumber()" },
+          "$other": { ".validate": false }
+        },
+
+        "interests": { ".validate": "newData.hasChildren() || !newData.exists()" },
+
+        "preferences": {
+          "searchRadius": { ".validate": "newData.isNumber() && newData.val() >= 100 && newData.val() <= 100000" },
+          "locationSharing": { ".validate": "newData.isBoolean()" },
+          "$other": { ".validate": false }
+        },
+
+        "updatedAt": { ".validate": "newData.isNumber()" },
+        "$other": { ".validate": false }
+      }
+    },
+
+    // -----------------------------------------------------------------------
+    // Positions. Indexed on geohash, and only readable through that index.
+    // -----------------------------------------------------------------------
+    "locations": {
+      ".read": "auth != null && query.orderByChild === 'geohash'",
+      ".indexOn": "geohash",
+
+      "$wallet": {
+        ".write": "auth != null && root.child('users').child($wallet).child('owner').val() === auth.uid",
+        ".validate": "newData.hasChildren(['latitude', 'longitude', 'timestamp', 'geohash'])",
+
+        "latitude": { ".validate": "newData.isNumber() && newData.val() >= -90 && newData.val() <= 90" },
+        "longitude": { ".validate": "newData.isNumber() && newData.val() >= -180 && newData.val() <= 180" },
+        // 177 m is half the diagonal of the 250 m cell - the error snapping
+        // introduces. A record claiming to be sharper than that is describing
+        // a position this app does not publish, so it is refused.
+        "accuracy": { ".validate": "newData.isNumber() && newData.val() >= 177" },
+        // City and region only. The cap is generous for long place names and
+        // tight enough that a street address does not fit comfortably.
+        "place": { ".validate": "newData.isString() && newData.val().length <= 80" },
+        // Rejects a client back-dating or future-dating itself out of the
+        // freshness window. One minute of clock skew is tolerated.
+        "timestamp": { ".validate": "newData.isNumber() && newData.val() <= now + 60000" },
+        "geohash": { ".validate": "newData.isString() && newData.val().length <= 12" },
+        "$other": { ".validate": false }
+      }
+    },
+
+    // -----------------------------------------------------------------------
+    // Presence. Written by the owner and by the server's onDisconnect.
+    // -----------------------------------------------------------------------
+    "presence": {
+      ".read": "auth != null",
+
+      "$wallet": {
+        ".write": "auth != null && root.child('users').child($wallet).child('owner').val() === auth.uid",
+        "online": { ".validate": "newData.isBoolean()" },
+        "lastSeen": { ".validate": "newData.isNumber()" },
+        "$other": { ".validate": false }
+      }
+    },
+
+    // -----------------------------------------------------------------------
+    // Conversations. Participants only, both directions.
+    // -----------------------------------------------------------------------
+    "conversations": {
+      "$cid": {
+        ".read": "auth != null && root.child('conversations').child($cid).child('participants').child(root.child('owners').child(auth.uid).val()).val() === true && root.child('users').child(root.child('owners').child(auth.uid).val()).child('owner').val() === auth.uid",
+
+        // Either already a participant, or joining as one in this very write.
+        ".write": "auth != null && root.child('users').child(root.child('owners').child(auth.uid).val()).child('owner').val() === auth.uid && (data.child('participants').child(root.child('owners').child(auth.uid).val()).val() === true || newData.child('participants').child(root.child('owners').child(auth.uid).val()).val() === true)",
+
+        "participants": {
+          "$wallet": { ".validate": "newData.isBoolean()" }
+        },
+
+        "messages": {
+          "$mid": {
+            // `.write` cascades from the conversation and cannot be revoked
+            // here, so immutability is enforced by validation instead: a
+            // message whose senderId is not the caller's own wallet cannot be
+            // written at all, which covers both forging one and editing
+            // someone else's.
+            ".validate": "newData.hasChildren(['senderId', 'text', 'timestamp', 'type', 'status'])",
+
+            "senderId": {
+              ".validate": "newData.isString() && newData.val() === root.child('owners').child(auth.uid).val() && root.child('users').child(newData.val()).child('owner').val() === auth.uid && root.child('conversations').child($cid).child('participants').child(newData.val()).val() === true"
+            },
+            "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 4000" },
+            "timestamp": { ".validate": "newData.isNumber() && newData.val() <= now + 60000" },
+            "type": { ".validate": "newData.isString() && newData.val().matches(/^(text|image|location|system|reaction)$/)" },
+            "status": { ".validate": "newData.isString() && newData.val().matches(/^(sent|delivered|read)$/)" },
+            "$other": { ".validate": false }
+          }
+        },
+
+        "$other": { ".validate": false }
+      }
+    },
+
+    // -----------------------------------------------------------------------
+    // The chat-list index. Each side writes both rows on send - that is the
+    // fan-out unread depends on - so a participant may write the other
+    // participant's row for the conversations they share, and nothing else.
+    // -----------------------------------------------------------------------
+    "userConversations": {
+      "$wallet": {
+        ".read": "auth != null && root.child('users').child($wallet).child('owner').val() === auth.uid",
+
+        "$cid": {
+          ".read": "auth != null && root.child('conversations').child($cid).child('participants').child(root.child('owners').child(auth.uid).val()).val() === true",
+          ".write": "auth != null && root.child('users').child(root.child('owners').child(auth.uid).val()).child('owner').val() === auth.uid && root.child('conversations').child($cid).child('participants').child(root.child('owners').child(auth.uid).val()).val() === true && root.child('conversations').child($cid).child('participants').child($wallet).val() === true",
+
+          "otherUserId": { ".validate": "newData.isString()" },
+          "lastMessage": { ".validate": "newData.isString() && newData.val().length <= 4000" },
+          "lastMessageTimestamp": { ".validate": "newData.isNumber()" },
+          "unreadCount": { ".validate": "newData.isNumber() && newData.val() >= 0" },
+          "$other": { ".validate": false }
+        }
+      }
+    }
+  }
+}

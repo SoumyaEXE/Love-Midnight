@@ -25,6 +25,8 @@
     "expo-splash-screen": "~57.0.8",
     "expo-status-bar": "~57.0.1",
     "expo-web-browser": "~57.0.2",
+    "firebase": "^12.18.0",
+    "geofire-common": "^6.0.0",
     "react": "19.2.3",
     "react-native": "0.86.3",
     "react-native-gesture-handler": "~2.32.0",
@@ -50,8 +52,9 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "check:matching": "node scripts/check-matching.mjs",
-    "check": "tsc --noEmit && node scripts/check-tab-structure.mjs && node scripts/check-matching.mjs",
-    "check:tabs": "node scripts/check-tab-structure.mjs"
+    "check": "tsc --noEmit && node scripts/check-tab-structure.mjs && node scripts/check-matching.mjs && node scripts/check-firebase-config.mjs",
+    "check:tabs": "node scripts/check-tab-structure.mjs",
+    "check:firebase": "node scripts/check-firebase-config.mjs"
   },
   "private": true
 }

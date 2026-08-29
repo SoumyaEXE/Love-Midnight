@@ -10,11 +10,14 @@ import { Avatar } from '@/components/ui/Avatar';
 import { MetalButton } from '@/components/ui/MetalButton';
 import { Badge, Chip, PressableCard } from '@/components/ui/primitives';
 import { ProfileSheet } from '@/components/sheets/ProfileSheet';
+import { NearbyList } from '@/components/nearby/NearbyList';
 import { Icon } from '@/components/icons/Icon';
 import { alpha, layout, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
 import { PEOPLE, PEOPLE_BY_ID, SELF } from '@/data/people';
 import { useHalo } from '@/state/store';
+import { useNearbyUsers } from '@/hooks/useNearbyUsers';
+import { formatRadius } from '@/firebase/geo';
 import { DISTANCE_LABEL, type DistanceBucket, type MatchBand } from '@/chain/midnight/types';
 
 /**
@@ -36,7 +39,9 @@ export default function HomeScreen() {
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const { visibility, setVisibility, proveProximity, proveMatch, mask, selfVector } = useHalo();
+  const { visibility, setVisibility, proveProximity, proveMatch, mask, selfVector, discovery } =
+    useHalo();
+  const nearbyLive = useNearbyUsers();
 
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<'wink' | 'match' | null>(null);
@@ -208,6 +213,30 @@ export default function HomeScreen() {
             />
           ))}
         </ScrollView>
+
+        {/* Live discovery. Real people, real positions, measured on this device
+            from what they published - as against the roster below, which is
+            people who have *proved* a bucket. Both are "nearby"; only one of
+            them is a measurement, so they are labelled and listed apart rather
+            than blended into a single list that would have to lie about one of
+            them. */}
+        <View style={styles.listHead}>
+          <Text style={type.eyebrow}>Live within {formatRadius(discovery.radius)}</Text>
+          <Text style={[type.micro, styles.listCount]}>
+            {nearbyLive.active && !nearbyLive.loading ? `${nearbyLive.users.length} people` : '—'}
+          </Text>
+        </View>
+
+        <NearbyList
+          users={nearbyLive.users}
+          loading={nearbyLive.loading}
+          error={nearbyLive.error}
+          active={nearbyLive.active}
+          sharing={visibility.live}
+          radiusLabel={formatRadius(discovery.radius)}
+          onOpen={(user) => router.push(`/chat/${user.wallet}`)}
+          onEnableSharing={() => setVisibility({ live: true })}
+        />
 
         {/* The people behind the areas. */}
         <View style={styles.listHead}>

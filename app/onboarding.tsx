@@ -63,7 +63,20 @@ import type { Proof } from '@/chain/midnight/types';
 
 type FormKind = 'identity' | 'bio' | 'interests' | 'card' | 'scoring';
 
+/**
+ * What a step *does*, as opposed to what it looks like.
+ *
+ * Added when verification moved. The old `advance` switched on the step's
+ * index - `step === 1` meant "prove adulthood" - which made the order of this
+ * array and the behaviour of that function two encodings of the same fact, kept
+ * in agreement by hand. Reordering under that scheme silently reassigns
+ * behaviour to whichever step inherits the index. Naming the action means the
+ * array can be reordered freely and nothing follows it.
+ */
+type StepKind = 'wallet' | 'verify' | 'form' | 'publish';
+
 type Step = {
+  kind: StepKind;
   title: string;
   /** One line, or nothing. Anything longer belongs on the privacy screen. */
   body?: string;
@@ -73,35 +86,65 @@ type Step = {
   form?: FormKind;
 };
 
+/**
+ * Wallet, then who you are, then the proof, then what you are into.
+ *
+ * Verification sits immediately after the profile answers and before interests.
+ * It used to run second, before the user had told the app anything at all,
+ * which asked for a credential proof from someone who had not yet decided they
+ * were signing up. Moving it after the identity and bio steps means the proof
+ * is the last thing between a filled-in profile and the rest of the flow, and
+ * every step after it can assume an adult.
+ *
+ * The verification step itself is untouched - same copy, same glyph, same
+ * proof. Only its position in this array changed.
+ */
 const STEPS: Step[] = [
   {
+    kind: 'wallet',
     icon: 'wallet',
     title: 'Connect a key',
     body: 'Your wallet signs handshakes and holds your credential. Halo never holds your keys, and never sees where you are.',
     action: 'Connect wallet',
   },
+  { kind: 'form', title: 'Who you are', action: 'Continue', form: 'identity' },
   {
+    kind: 'form',
+    title: 'Your bio',
+    body: 'This is what the matcher reads.',
+    action: 'Continue',
+    form: 'bio',
+  },
+  {
+    kind: 'verify',
     icon: 'fingerprint',
     title: 'Prove you are over 18',
     body: 'A zero-knowledge proof against your credential. Halo learns one bit. Your date of birth stays in the wallet.',
     action: 'Prove adulthood',
   },
-  { title: 'Who you are', action: 'Continue', form: 'identity' },
-  { title: 'Your bio', body: 'This is what the matcher reads.', action: 'Continue', form: 'bio' },
   {
+    kind: 'form',
     title: 'What you are into',
     body: 'Pick what is actually true.',
     action: 'Continue',
     form: 'interests',
   },
-  { title: 'On your card', body: 'What other people see.', action: 'Continue', form: 'card' },
   {
+    kind: 'form',
+    title: 'On your card',
+    body: 'What other people see.',
+    action: 'Continue',
+    form: 'card',
+  },
+  {
+    kind: 'form',
     title: 'What the matcher scores',
     body: 'A closed dimension leaves the arithmetic on both sides.',
     action: 'Continue',
     form: 'scoring',
   },
   {
+    kind: 'publish',
     icon: 'broadcast',
     title: 'Turn on proximity',
     body: 'Your fix is snapped to a 250 m grid on this device. Only the commitment leaves.',
@@ -114,7 +157,7 @@ const LAST = STEPS.length - 1;
 export default function OnboardingScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { connect, wallet, profile, saveProfile, publishProfile, mask, toggleDimension } =
+  const { connect, wallet, profile, saveProfile, publishProfile, mask, toggleDimension, markVerified } =
     useHalo();
 
   const [step, setStep] = useState(0);
@@ -155,13 +198,17 @@ export default function OnboardingScreen() {
     setBusy(true);
     setFailed(null);
     try {
-      if (step === 0) {
+      if (current.kind === 'wallet') {
         await connect();
-      } else if (step === 1) {
+      } else if (current.kind === 'verify') {
         // The credential proof runs against the wallet-held credential; the
         // demo advances without one rather than blocking the walkthrough.
         await new Promise((resolve) => setTimeout(resolve, 900));
-      } else if (step === LAST) {
+        // Recorded, not decided here. The step above is the verification; this
+        // only keeps its answer, so a relaunch and the discovery query can both
+        // read it instead of asking the user to prove adulthood twice.
+        markVerified();
+      } else if (current.kind === 'publish') {
         // Coarse accuracy is all the grid needs, and asking for less is the
         // point - a fine fix would be discarded a moment later anyway.
         await Location.requestForegroundPermissionsAsync();
@@ -179,7 +226,7 @@ export default function OnboardingScreen() {
     } finally {
       setBusy(false);
     }
-  }, [current.form, profile, step, connect, publishProfile, goTo]);
+  }, [current.form, current.kind, profile, step, connect, markVerified, publishProfile, goTo]);
 
   const ready = isComplete(profile);
   const finished = done !== null;
