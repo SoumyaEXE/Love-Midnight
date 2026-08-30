@@ -413,6 +413,30 @@ export function ScoringSection({
   );
 }
 
+// -----------------------------------------------------------------------------
+// Deploy
+// -----------------------------------------------------------------------------
+
+export function DeploySection({ profile }: { profile: HaloProfile }) {
+  return (
+    <View style={styles.deploy}>
+      <Text style={[type.callout, { color: alpha.t56 }]}>
+        Your profile will be stored in a smart contract on the Midnight Network.
+      </Text>
+      <View style={styles.deployPreview}>
+        <Text style={[type.captionStrong, { marginBottom: space.sm }]}>Payload Preview</Text>
+        <Text style={[type.caption, { color: alpha.t56, fontFamily: 'monospace' }]}>
+          {JSON.stringify({ name: profile.name, age: profile.age, interests: profile.interests }, null, 2)}
+        </Text>
+      </View>
+      <View style={styles.deployFee}>
+        <Text style={[type.body, { color: palette.white }]}>Network Fee</Text>
+        <Text style={[type.body, { color: palette.positive }]}>1 NIGHT</Text>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: space.md },
   rowGrow: { flex: 1 },
@@ -511,4 +535,24 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
   },
   alwaysNote: { color: alpha.t38 },
+
+  deploy: { gap: space.md },
+  deployPreview: {
+    padding: space.md,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: radii.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: alpha.t10,
+  },
+  deployFee: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: space.md,
+    paddingHorizontal: space.lg,
+    backgroundColor: 'rgba(168,85,247,0.15)',
+    borderRadius: radii.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(216,180,254,0.3)',
+  },
 });

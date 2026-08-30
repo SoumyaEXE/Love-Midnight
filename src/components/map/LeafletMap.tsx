@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { StyleSheet, Text, View, Platform, type StyleProp, type ViewStyle } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { LinearGradient } from 'expo-linear-gradient';
 import { alpha, radius as radii, space } from '@/theme/tokens';
@@ -89,6 +89,7 @@ export function LeafletMap({
   style,
 }: LeafletMapProps) {
   const webview = useRef<WebView>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [avatars, setAvatars] = useState<Record<string, string>>({});
@@ -147,7 +148,12 @@ export function LeafletMap({
     const json = JSON.stringify(payload)
       .replace(/\u2028/g, '\\u2028')
       .replace(/\u2029/g, '\\u2029');
-    webview.current?.injectJavaScript(`window.__halo && window.__halo.render(${json}); true;`);
+    
+    if (Platform.OS === 'web') {
+      iframeRef.current?.contentWindow?.postMessage({ type: 'render', payload: payload }, '*');
+    } else {
+      webview.current?.injectJavaScript(`window.__halo && window.__halo.render(${json}); true;`);
+    }
   }, [ready, payload]);
 
   /**
@@ -173,9 +179,11 @@ export function LeafletMap({
   useEffect(() => release, [release]);
 
   const onMessage = useCallback(
-    (event: WebViewMessageEvent) => {
+    (event: WebViewMessageEvent | MessageEvent) => {
       try {
-        const message = JSON.parse(event.nativeEvent.data) as { type: string; id?: string };
+        const data = 'nativeEvent' in event ? event.nativeEvent.data : event.data;
+        if (typeof data !== 'string') return;
+        const message = JSON.parse(data) as { type: string; id?: string };
         if (message.type === 'ready') setReady(true);
         else if (message.type === 'error') setFailed(true);
         else if (message.type === 'select' && message.id) onSelect?.(message.id);
@@ -185,6 +193,17 @@ export function LeafletMap({
     },
     [onSelect],
   );
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    window.addEventListener('message', onMessage as any);
+    return () => window.removeEventListener('message', onMessage as any);
+  }, [onMessage]);
+
+  const webMapHtml = useMemo(() => {
+    if (Platform.OS !== 'web') return MAP_HTML;
+    return MAP_HTML.replace('<script>', `<script>${TILE_BOOTSTRAP}</script>\n<script>`);
+  }, []);
 
   return (
     <View
@@ -197,30 +216,38 @@ export function LeafletMap({
       onTouchEnd={release}
       onTouchCancel={release}
     >
-      <WebView
-        ref={webview}
-        source={{ html: MAP_HTML, baseUrl: 'https://halo.local/' }}
-        // Runs before the document's own scripts, so Leaflet builds its tile
-        // layer from the configured source on the first paint rather than
-        // showing a frame of the wrong basemap and swapping it.
-        injectedJavaScriptBeforeContentLoaded={TILE_BOOTSTRAP}
-        originWhitelist={['*']}
-        onMessage={onMessage}
-        style={styles.web}
-        containerStyle={styles.web}
-        javaScriptEnabled
-        domStorageEnabled
-        // The document is a fixed viewport; any scrolling inside it is the map
-        // failing to claim the gesture.
-        scrollEnabled={false}
-        overScrollMode="never"
-        bounces={false}
-        nestedScrollEnabled
-        setSupportMultipleWindows={false}
-        androidLayerType="hardware"
-        allowsInlineMediaPlayback
-        automaticallyAdjustContentInsets={false}
-      />
+      {Platform.OS === 'web' ? (
+        <iframe
+          ref={iframeRef as any}
+          srcDoc={webMapHtml}
+          style={{ width: '100%', height: '100%', border: 'none', backgroundColor: '#0B0813' }}
+        />
+      ) : (
+        <WebView
+          ref={webview}
+          source={{ html: MAP_HTML, baseUrl: 'https://halo.local/' }}
+          // Runs before the document's own scripts, so Leaflet builds its tile
+          // layer from the configured source on the first paint rather than
+          // showing a frame of the wrong basemap and swapping it.
+          injectedJavaScriptBeforeContentLoaded={TILE_BOOTSTRAP}
+          originWhitelist={['*']}
+          onMessage={onMessage as any}
+          style={styles.web}
+          containerStyle={styles.web}
+          javaScriptEnabled
+          domStorageEnabled
+          // The document is a fixed viewport; any scrolling inside it is the map
+          // failing to claim the gesture.
+          scrollEnabled={false}
+          overScrollMode="never"
+          bounces={false}
+          nestedScrollEnabled
+          setSupportMultipleWindows={false}
+          androidLayerType="hardware"
+          allowsInlineMediaPlayback
+          automaticallyAdjustContentInsets={false}
+        />
+      )}
 
       {/* Held until Leaflet reports ready, so the map fades in rather than
           revealing a bare tile grid mid-load. */}

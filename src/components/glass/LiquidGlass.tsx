@@ -119,7 +119,7 @@ function GlassRim({
   const rotation = useDerivedValue(() => [{ rotate: tilt ? tilt.value : 0 }], [tilt]);
 
   return (
-    <Canvas style={[StyleSheet.absoluteFill, { width, height }]} pointerEvents="none">
+    <Canvas style={StyleSheet.flatten([StyleSheet.absoluteFill, { width, height, pointerEvents: 'none' as any }])} pointerEvents="none">
       {/* Wide, soft pass first: the glass body picking up light behind the rim. */}
       <RoundedRect rect={clip} style="stroke" strokeWidth={strokeWidth * 4}>
         <SweepGradient
