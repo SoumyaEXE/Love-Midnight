@@ -281,6 +281,8 @@ export default function PrivacyScreen() {
 function LocationStatus({
   live,
   sharing,
+  owned,
+  hasWallet,
   connection,
   publishedAt,
 }: {

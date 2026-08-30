@@ -8,7 +8,7 @@
   li { margin: .4rem 0; }
 </style>
 <h1>MIDN8 API</h1>
-<p>Serverless endpoints for the MIDN8 app. The app itself is not served here.</p>
+<p>Serverless endpoints for the MIDN8 app. This directory is deliberately named <code>api-public</code>, not <code>public</code> — Expo treats <code>public/</code> as its web static root and an <code>index.html</code> there shadows the app.</p>
 <ul>
   <li><code>POST /api/register</code> — bind a wallet to a session</li>
   <li><code>POST /api/requests/send</code> — send a connection request</li>

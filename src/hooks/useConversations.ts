@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { onValue, ref } from 'firebase/database';
 import { database } from '@/firebase/config';
-import { demoPersonId, isDemoKey, paths } from '@/firebase/paths';
+import { demoPersonId, isDemoKey, otherParticipant, paths } from '@/firebase/paths';
 import { PEOPLE_BY_ID } from '@/data/people';
 import type {
   RemoteConversationEntry,
@@ -115,9 +115,19 @@ export function useConversations(): ConversationsState {
       };
     }
 
-    const person = people[entry.otherUserId];
+    /*
+     * `otherUserId` is a convenience field on the row, and a row written by an
+     * older client - or half-written - may not carry it. The conversation id is
+     * the sorted pair of both wallets, so the counterpart is always recoverable
+     * from the key even when the field is absent. Falling back to it keeps the
+     * avatar and the chat route pointing at a real wallet instead of
+     * `undefined`.
+     */
+    const counterpart = entry.otherUserId ?? (self ? otherParticipant(entry.id, self) : null);
+    const person = counterpart ? people[counterpart] : undefined;
     return {
       ...entry,
+      otherUserId: counterpart ?? entry.id,
       name: person?.profile?.name ?? 'Someone nearby',
       avatar: person?.profile?.avatar ?? null,
       online: person?.presence?.online ?? false,

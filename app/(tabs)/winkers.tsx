@@ -12,7 +12,18 @@ import { ProfileSheet } from '@/components/sheets/ProfileSheet';
 import { RequestsSheet, type ContactRequest } from '@/components/sheets/RequestsSheet';
 import { alpha, layout, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
-import { PEOPLE_BY_ID, WINKS, type Wink } from '@/data/people';
+import { PEOPLE_BY_ID, type Wink } from '@/data/people';
+
+/**
+ * The winks grid, emptied.
+ *
+ * `WINKS` was a fixture over the roster - people who cannot wink, because they
+ * have no session to wink from. Nothing writes winks to the database yet, so
+ * the honest list is an empty one, and the screen's own empty state already
+ * says so. The binding is kept rather than the usage deleted so that wiring a
+ * real `winks/{wallet}` node here is a one-line change.
+ */
+const DEMO_WINKS: Wink[] = [];
 import { useHalo } from '@/state/store';
 import { useRequestCards, useRequests } from '@/hooks/useRequests';
 
@@ -82,22 +93,7 @@ const FILTER_GROUPS: FilterGroup[] = [
 
 const DEFAULT_FILTERS: FilterSelection = { time: 'all', interaction: 'all', status: 'all' };
 
-/**
- * The roster's stand-in requests.
- *
- * Kept because the roster personas have no session and can never send a real
- * one, so without these the sheet is empty until a second real account exists -
- * which on a fresh install is every time. Real requests are appended to these,
- * not substituted for them, and the two are distinguishable: a roster entry
- * resolves through `PEOPLE_BY_ID`, a real one carries its own name and avatar.
- */
-const DEMO_REQUESTS: ContactRequest[] = [
-  { personId: 'tom', at: '10.03.2025' },
-  { personId: 'anna', at: '03.03.2025' },
-  { personId: 'michael', at: '12.03.2025' },
-  { personId: 'emma', at: '10.03.2025' },
-  { personId: 'nataly', at: '03.03.2025' },
-];
+
 
 /** Buckets a relative timestamp onto the sheet's time axis. */
 function timeBucket(at: string): 'today' | 'yesterday' | 'older' {
@@ -122,11 +118,11 @@ export default function WinkersScreen() {
   const requests = useRequests();
   const { cards } = useRequestCards();
 
-  /** Real requests first - those are the ones that can actually be answered. */
-  const allRequests = useMemo<ContactRequest[]>(
-    () => [...cards, ...DEMO_REQUESTS],
-    [cards],
-  );
+  /**
+   * Only real requests. The roster's stand-ins are gone: a persona has no
+   * session, so accepting one wrote nothing and connected nobody.
+   */
+  const allRequests = useMemo<ContactRequest[]>(() => cards, [cards]);
 
   /**
    * Answering a request.
@@ -150,7 +146,7 @@ export default function WinkersScreen() {
 
   const visible = useMemo(
     () =>
-      WINKS.filter((wink) => {
+      DEMO_WINKS.filter((wink) => {
         if (filters.interaction !== 'all' && wink.kind !== filters.interaction) return false;
         if (filters.time !== 'all' && timeBucket(wink.at) !== filters.time) return false;
 
@@ -204,7 +200,7 @@ export default function WinkersScreen() {
         {activeCount > 0 ? (
           <View style={styles.summary}>
             <Badge
-              label={`${visible.length} of ${WINKS.length} shown`}
+              label={`${visible.length} of ${DEMO_WINKS.length} shown`}
               tone="violet"
               icon="sliders"
             />

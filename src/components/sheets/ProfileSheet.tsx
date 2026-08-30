@@ -41,6 +41,30 @@ export type ProfileSheetProps = {
   onProveMatch?: (personId: string, band: MatchBand) => void;
   winking?: boolean;
   proving?: boolean;
+  /**
+   * Present when this card is a real discovered account rather than a roster
+   * persona, and it changes what the footer can offer.
+   *
+   * The roster's actions are proofs - `proveProximity` and `proveMatch` run
+   * Midnight circuits keyed on a roster id, against fixtures with known
+   * vectors. A discovered user has a wallet and no circuit input, so those
+   * buttons would fail on a lookup rather than do anything. What a real account
+   * supports instead is the consent flow: ask, then talk.
+   */
+  remote?: {
+    /** `null` when no request exists yet, which is what permits sending one. */
+    status: 'none' | 'pending' | 'declined' | 'connected';
+    onRequest: () => void;
+    onMessage: () => void;
+    busy?: boolean;
+  };
+};
+
+const REMOTE_LABEL: Record<'none' | 'pending' | 'declined' | 'connected', string> = {
+  none: 'Send request',
+  pending: 'Request sent',
+  declined: 'Request declined',
+  connected: 'Message',
 };
 
 export function ProfileSheet({
@@ -51,6 +75,7 @@ export function ProfileSheet({
   selfVector,
   onWink,
   onProveMatch,
+  remote,
   winking = false,
   proving = false,
 }: ProfileSheetProps) {
@@ -77,20 +102,37 @@ export function ProfileSheet({
         onClose={close}
         scrollable
         footer={
-          <MetalButton
-            label="Send wink"
-            variant="light"
-            size="lg"
-            fullWidth
-            loading={winking}
-            onPress={() => onWink?.(person.id)}
-          />
+          remote ? (
+            <MetalButton
+              label={REMOTE_LABEL[remote.status]}
+              variant="light"
+              size="lg"
+              fullWidth
+              loading={remote.busy}
+              // Both terminal-for-the-sender states. The rules admit a
+              // *create* and not an overwrite, so re-pressing either would
+              // only produce a permission error.
+              disabled={remote.status === 'declined' || remote.status === 'pending'}
+              onPress={remote.status === 'connected' ? remote.onMessage : remote.onRequest}
+            />
+          ) : (
+            <MetalButton
+              label="Send wink"
+              variant="light"
+              size="lg"
+              fullWidth
+              loading={winking}
+              onPress={() => onWink?.(person.id)}
+            />
+          )
         }
       >
         <View style={styles.hero}>
           <Avatar email={person.email} size={92} online={person.online} />
           <Text style={[type.title1, styles.name]}>
-            {person.name}, {person.age}
+            {/* A published profile may withhold age, which arrives here as 0.
+                Rendering "Name, 0" would be worse than rendering the name. */}
+            {person.age > 0 ? `${person.name}, ${person.age}` : person.name}
           </Text>
           <Text style={[type.bodyLight, styles.bio]}>{person.bio}</Text>
 

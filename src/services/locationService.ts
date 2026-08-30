@@ -145,6 +145,36 @@ export async function currentFix(): Promise<Coords | null> {
   }
 }
 
+/**
+ * One position, prompting for permission if it has not been asked yet.
+ *
+ * The counterpart to `currentFix`, and the split matters on web. There,
+ * `getForegroundPermissionsAsync` reports `undetermined` until something
+ * actually asks - the Permissions API answers "prompt", not "granted" - so
+ * `currentFix` correctly returns null and the map sits on its fallback origin
+ * forever. On a handset the sharing toggle eventually asks; in a browser, with
+ * no wallet connected, nothing ever did.
+ *
+ * So this exists to be called from a user gesture, where a permission dialog is
+ * expected rather than ambient. It still publishes nothing.
+ */
+export async function requestFix(): Promise<Coords | null> {
+  try {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== Location.PermissionStatus.GRANTED) return null;
+
+    const position = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+    return {
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Stops being discoverable. The record is removed, not flagged. */
 export async function clearLocation(wallet: string): Promise<void> {
   await remove(ref(database, paths.location(wallet)));

@@ -17,8 +17,12 @@ import { type } from '@/theme/typography';
 import { PEOPLE, PEOPLE_BY_ID, SELF } from '@/data/people';
 import { useHalo } from '@/state/store';
 import { useFirebase } from '@/state/firebase';
+import { isComplete } from '@/state/profile';
 import { useNearbyUsers } from '@/hooks/useNearbyUsers';
-import { formatRadius, snapToGrid } from '@/firebase/geo';
+import { useRequests, useSentRequestStatus } from '@/hooks/useRequests';
+import { formatDistance, formatRadius, snapToGrid } from '@/firebase/geo';
+import type { NearbyUser } from '@/firebase/types';
+import type { Person } from '@/data/people';
 import { BUCKET_REACH_M } from '@/components/map/placement';
 import { DISTANCE_LABEL, type DistanceBucket, type MatchBand } from '@/chain/midnight/types';
 
@@ -57,10 +61,21 @@ export default function HomeScreen() {
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const { visibility, setVisibility, proveProximity, proveMatch, mask, selfVector, discovery } =
-    useHalo();
+  const {
+    visibility,
+    setVisibility,
+    proveProximity,
+    proveMatch,
+    mask,
+    selfVector,
+    discovery,
+    wallet,
+    connect,
+    profile,
+    verified,
+  } = useHalo();
   const nearbyLive = useNearbyUsers();
-  const { here } = useFirebase();
+  const { here, locate } = useFirebase();
 
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<'wink' | 'match' | null>(null);
@@ -118,16 +133,75 @@ export default function HomeScreen() {
     [nearbyLive.users],
   );
 
-  /** The chips filter the list and dim the map from one piece of state. */
-  const nearby = useMemo(
-    () =>
-      PEOPLE.filter((p) => p.id !== 'sophie' && p.bucket <= visibility.maxBucket).sort(
-        (a, b) => a.bucket - b.bucket,
-      ),
-    [visibility.maxBucket],
-  );
+  /**
+   * The proved-bucket list, now empty.
+   *
+   * This was the roster: nine fixtures with hand-written buckets, presented
+   * beside real discovery as though both were people you could meet. Nothing
+   * writes a proved bucket to the database yet, so the honest list is empty and
+   * the screen's existing empty state says exactly that. The chips still filter
+   * it, so wiring a real source here changes nothing else.
+   */
+  const nearby = useMemo<typeof PEOPLE>(() => [], []);
 
   const person = selected ? PEOPLE_BY_ID.get(selected) ?? null : null;
+
+  /**
+   * The discovered account whose card is open.
+   *
+   * Held apart from `selected`, which is a roster id. They are different kinds
+   * of thing - one is a fixture with a known interest vector, the other is a
+   * wallet with a published card - and the sheet offers different actions for
+   * each, so collapsing them into one string would mean guessing which it was
+   * on every read.
+   */
+  const [openUser, setOpenUser] = useState<NearbyUser | null>(null);
+  const requests = useRequests();
+  const sentStatus = useSentRequestStatus(openUser?.wallet ?? null);
+  const [requesting, setRequesting] = useState(false);
+
+  /**
+   * A discovered account, in the shape the sheet already renders.
+   *
+   * `age` is the one field that does not survive: `Person` requires a number
+   * and a published profile may withhold it, so 0 stands for "not disclosed"
+   * and the sheet's header drops it rather than inventing one.
+   */
+  const openPerson = useMemo<Person | null>(() => {
+    if (!openUser) return null;
+    return {
+      id: openUser.wallet,
+      name: openUser.profile.name,
+      age: openUser.profile.age ?? 0,
+      email: openUser.profile.avatar,
+      bio: openUser.profile.bio ?? '',
+      tags: openUser.profile.interests ?? [],
+      area: openUser.place ?? formatDistance(openUser.distance),
+      bucket: bucketForDistance(openUser.distance),
+      online: openUser.online,
+      lastSeen: openUser.online ? 'Active now' : '',
+    };
+  }, [openUser]);
+
+  const remoteStatus = useMemo(() => {
+    if (!openUser) return 'none' as const;
+    if (requests.isConnected(openUser.wallet)) return 'connected' as const;
+    if (sentStatus === 'pending') return 'pending' as const;
+    if (sentStatus === 'declined') return 'declined' as const;
+    return 'none' as const;
+  }, [openUser, requests, sentStatus]);
+
+  const onSendRequest = useCallback(async () => {
+    if (!openUser) return;
+    setRequesting(true);
+    try {
+      await requests.send(openUser.wallet);
+    } catch (error) {
+      console.warn('[halo] request failed', error);
+    } finally {
+      setRequesting(false);
+    }
+  }, [openUser, requests]);
 
   /**
    * A marker tap.
@@ -143,10 +217,55 @@ export default function HomeScreen() {
         setSelected(id);
         return;
       }
-      router.push(`/chat/${id}`);
+      // Was a jump straight into the conversation, which skipped the only
+      // screen that says who this person is - and offered a compose box the
+      // rules would have refused, since no request had been sent yet.
+      const found = nearbyLive.users.find((u) => u.wallet === id);
+      if (found) setOpenUser(found);
     },
-    [router],
+    [nearbyLive.users],
   );
+
+  const [connecting, setConnecting] = useState(false);
+  const walletConnected = wallet.status === 'connected';
+
+  /**
+   * Connect, then ask for a position, then start broadcasting.
+   *
+   * All three in one gesture because they are one intention - "put me on the
+   * map" - and separately they are three dead ends. A wallet with no fix
+   * publishes nothing; a fix with sharing off is never written; and on web the
+   * permission dialog only appears if something asks inside a user gesture,
+   * which is why `locate()` is called here rather than on mount.
+   *
+   * Ordered, not parallel: `locate` is what makes the map centre correctly, and
+   * turning on broadcasting before there is a fix just starts a watcher that
+   * waits.
+   */
+  const onConnectWallet = useCallback(async () => {
+    setConnecting(true);
+    try {
+      if (!walletConnected) await connect();
+      await locate();
+      if (!visibility.live) setVisibility({ live: true });
+    } catch (error) {
+      console.warn('[halo] connect failed', error);
+    } finally {
+      setConnecting(false);
+    }
+  }, [walletConnected, connect, locate, visibility.live, setVisibility]);
+
+  /**
+   * Whether this account can appear in anyone's results.
+   *
+   * Connecting a wallet is not enough, and that gap is invisible without this:
+   * `discoveryService` drops any candidate whose record has no `profile.name`
+   * or whose `verification.adult` is not true, so a user who connected and
+   * started broadcasting publishes a position that every other client then
+   * silently discards. Both halves come from onboarding - `markVerified` and a
+   * complete profile - and nothing else writes them.
+   */
+  const publishable = isComplete(profile) && verified.ok;
 
   const minutesLeft = visibility.until
     ? Math.max(0, Math.round((visibility.until - Date.now()) / 60000))
@@ -299,18 +418,50 @@ export default function HomeScreen() {
           </Text>
         </View>
 
+        {!walletConnected || !publishable ? (
+          /*
+           * Sits where the results would be, because it is the answer to the
+           * question the empty list raises. Two different problems, and telling
+           * them apart matters: a missing wallet means nothing is published at
+           * all, while an incomplete profile means a position *is* being
+           * published and quietly discarded by every reader.
+           */
+          <View style={styles.connectWrap}>
+            <LiquidGlass radius={radii.lg} style={styles.connect} intensity={50}>
+              <Icon name="broadcast" size={19} color={alpha.t72} />
+              <View style={styles.connectText}>
+                <Text style={type.calloutStrong}>
+                  {walletConnected ? 'Finish your profile' : 'Connect your wallet'}
+                </Text>
+                <Text style={[type.caption, styles.connectSub]}>
+                  {walletConnected
+                    ? 'Your position is being published, but nobody can see it: discovery skips anyone without a name and an age check.'
+                    : 'Your address is what the database keys your profile, position and messages to.'}
+                </Text>
+              </View>
+              <MetalButton
+                label={walletConnected ? 'Finish' : connecting ? 'Connecting…' : 'Connect'}
+                variant="metal"
+                size="sm"
+                onPress={walletConnected ? () => router.push('/onboarding') : onConnectWallet}
+                disabled={connecting}
+              />
+            </LiquidGlass>
+          </View>
+        ) : (
         <NearbyList
           users={nearbyLive.users}
           loading={nearbyLive.loading}
           error={nearbyLive.error}
           active={nearbyLive.active}
           blocker={nearbyLive.blocker}
-          onConnectWallet={() => router.push('/onboarding')}
+          onConnectWallet={onConnectWallet}
           sharing={visibility.live}
           radiusLabel={formatRadius(discovery.radius)}
-          onOpen={(user) => router.push(`/chat/${user.wallet}`)}
+          onOpen={setOpenUser}
           onEnableSharing={() => setVisibility({ live: true })}
         />
+        )}
 
         {/* The people behind the areas. */}
         <View style={styles.listHead}>
@@ -367,6 +518,27 @@ export default function HomeScreen() {
 
       {/* Profiles rise over the map rather than replacing it, so you keep your
           place while glancing at someone. */}
+      {/* The discovered-account card. Same sheet, different footer: a wallet
+          has no interest vector to prove against, so what it offers is the
+          consent flow rather than the circuits. */}
+      <ProfileSheet
+        person={openPerson}
+        visible={openUser !== null}
+        onClose={() => setOpenUser(null)}
+        mask={mask}
+        selfVector={selfVector}
+        remote={{
+          status: remoteStatus,
+          busy: requesting,
+          onRequest: onSendRequest,
+          onMessage: () => {
+            const wallet = openUser?.wallet;
+            setOpenUser(null);
+            if (wallet) router.push(`/chat/${wallet}`);
+          },
+        }}
+      />
+
       <ProfileSheet
         person={person}
         visible={person !== null}
@@ -396,6 +568,10 @@ const styles = StyleSheet.create({
   tagline: { marginTop: 3 },
 
   visibilityRow: { alignItems: 'center', zIndex: 2 },
+  connectWrap: { paddingTop: space.xs },
+  connect: { flexDirection: 'row', alignItems: 'center', padding: space.lg },
+  connectText: { flex: 1, marginHorizontal: space.md },
+  connectSub: { marginTop: 2 },
   visibility: {
     flexDirection: 'row',
     alignItems: 'center',

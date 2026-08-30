@@ -16,6 +16,7 @@ import { claimWallet, syncUser } from '@/services/userService';
 import {
   clearLocation,
   currentFix,
+  requestFix,
   publishLocation,
   watchLocation,
   type LocationError,
@@ -60,6 +61,12 @@ export type FirebaseSession = {
 
   /** Last fix the device produced. Never published beyond `locations/{wallet}`. */
   here: Coords | null;
+  /**
+   * Asks for a fix, prompting for permission if needed. Call from a user
+   * gesture - a browser reports `prompt` rather than `granted` until something
+   * asks, so the passive read at boot returns nothing on web.
+   */
+  locate: () => Promise<void>;
   /** True while a location watch is running. */
   sharing: boolean;
   /** Epoch ms of the last successful position write. */
@@ -146,6 +153,13 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       alive = false;
     };
   }, [uid, address]);
+
+  const locate = useCallback(async () => {
+    const fix = await requestFix();
+    // A refusal is not an error worth surfacing: the map keeps its fallback
+    // origin, which is exactly the state the user was already in.
+    if (fix) setHere(fix);
+  }, []);
 
   const sync = useCallback(async () => {
     if (!address || !owned) return;
@@ -285,11 +299,12 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
       error,
       dismissError: () => setError(null),
       here,
+      locate,
       sharing,
       publishedAt,
       sync,
     }),
-    [uid, wallet, connection, owned, error, here, sharing, publishedAt, sync],
+    [uid, wallet, connection, owned, error, here, locate, sharing, publishedAt, sync],
   );
 
   return <FirebaseContext.Provider value={value}>{children}</FirebaseContext.Provider>;

@@ -15,7 +15,7 @@ import { GlassPanel } from '@/components/glass/LiquidGlass';
 import { Icon, type IconName } from '@/components/icons/Icon';
 import { layout, motion, palette, radius as radii, space } from '@/theme/tokens';
 import { fontFamily } from '@/theme/typography';
-import { WINKS } from '@/data/people';
+
 import { useConversations } from '@/hooks/useConversations';
 
 /**
@@ -49,7 +49,10 @@ export default function TabsLayout() {
   const pathname = usePathname();
   const [barWidth, setBarWidth] = useState(0);
 
-  const unread = WINKS.filter((w) => w.unread).length;
+  // Was a count over the roster fixture, which is not a number about this
+  // user. Real unread lives in `useConversations().unread`; until the badge is
+  // wired to it, no badge is better than a fabricated one.
+  const unread = 0;
   // Realtime, from the conversation index rather than from the messages
   // themselves - the badge is exactly the sum the chat list already subscribes
   // to, so it can never disagree with the rows underneath it.

@@ -43,16 +43,21 @@ export default function ChatScreen() {
     [live.rows],
   );
 
-  const results = useMemo(() => {
-    return CONVERSATIONS.filter((c) => {
-      if (started.has(demoKey(c.personId))) return false;
-      if (!needle) return true;
-      const person = PEOPLE_BY_ID.get(c.personId);
-      return (
-        person?.name.toLowerCase().includes(needle) || c.preview.toLowerCase().includes(needle)
-      );
-    });
-  }, [needle, started]);
+  /*
+   * The demo roster no longer appears in this list.
+   *
+   * `CONVERSATIONS` is a static fixture: five personas with no session, no
+   * wallet and no way to reply. Listing them beside real conversations made the
+   * chat list mostly fiction, and every one of them opened a thread that could
+   * never receive a message. Real conversations are `live.rows`, which is what
+   * the screen shows now - and an empty list is the honest state for an account
+   * that has not talked to anyone yet.
+   *
+   * `started` is retained because `chat/[id].tsx` still resolves `demo_` keys:
+   * a thread already opened against a persona keeps working from its stored
+   * rows, it simply is not advertised here.
+   */
+  const results: typeof CONVERSATIONS = [];
 
   const liveRows = useMemo(() => {
     if (!needle) return live.rows;
@@ -146,10 +151,6 @@ export default function ChatScreen() {
               ))}
             </View>
           </>
-        ) : null}
-
-        {liveRows.length > 0 ? (
-          <Text style={[type.eyebrow, styles.sectionLabel]}>Demo roster</Text>
         ) : null}
 
         <View style={styles.list}>

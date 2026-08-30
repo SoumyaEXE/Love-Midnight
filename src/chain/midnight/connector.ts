@@ -1,4 +1,6 @@
 import * as Linking from 'expo-linking';
+import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
 import type { ConnectedAPI, InitialAPI } from '@midnight-ntwrk/dapp-connector-api';
@@ -45,7 +47,52 @@ export type Connector = {
 
 const WALLET_SCHEME = 'midnight://';
 
+/**
+ * Where the local identity is kept.
+ *
+ * `expo-secure-store` is native-only - it is the iOS keychain and the Android
+ * keystore, and it has no web implementation at all. Every call throws
+ * `UnavailabilityError` in a browser, which is why `connect()` failed on the
+ * web build: the local connector's first act is to read the seed, that threw,
+ * `store.tsx` caught it and set `wallet.status` to `unavailable`, and with no
+ * address the ownership claim never ran and discovery never activated. One
+ * failure, presenting as both "connect does nothing" and "nobody appears on
+ * the map".
+ *
+ * On web the fallback is AsyncStorage, which is `localStorage` in a browser.
+ * That is a genuine downgrade and worth being clear about rather than papering
+ * over: `localStorage` is readable by any script on the origin and is not
+ * hardware-backed, so the seed is protected by the origin alone. For the
+ * on-device demo identity - which signs nothing of value and holds no funds -
+ * that is an acceptable trade for the app working in a browser at all. It
+ * would not be acceptable for a real wallet key, and a real wallet does not go
+ * through this path: a browser with the Midnight extension resolves the
+ * injected connector instead, and the extension holds its own keys.
+ */
+const store = {
+  get: (key: string): Promise<string | null> =>
+    Platform.OS === 'web' ? AsyncStorage.getItem(key) : SecureStore.getItemAsync(key),
+
+  set: (key: string, value: string): Promise<void> =>
+    Platform.OS === 'web'
+      ? AsyncStorage.setItem(key, value)
+      : SecureStore.setItemAsync(key, value, {
+          keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+        }),
+
+  remove: (key: string): Promise<void> =>
+    Platform.OS === 'web' ? AsyncStorage.removeItem(key) : SecureStore.deleteItemAsync(key),
+};
+
 export async function isWalletAppInstalled(): Promise<boolean> {
+  // Never on web, and not merely because it would fail. `canOpenURL` on
+  // react-native-web does not probe anything - it can answer `true` for a
+  // scheme no handler exists for - which would select the deeplink transport
+  // and leave a browser tab waiting for a native app to call back through a
+  // URL listener that will never fire. A browser reaches a real wallet through
+  // the injected extension API, not through a custom scheme.
+  if (Platform.OS === 'web') return false;
+
   try {
     return await Linking.canOpenURL(`${WALLET_SCHEME}connect`);
   } catch {
@@ -130,22 +177,20 @@ function localConnector(): Connector {
     transport: 'local',
 
     async connect() {
-      let seed = await SecureStore.getItemAsync(KEY_SEED);
+      let seed = await store.get(KEY_SEED);
       if (!seed) {
         seed = bytesToHex(Crypto.getRandomBytes(32));
-        await SecureStore.setItemAsync(KEY_SEED, seed, {
-          keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-        });
+        await store.set(KEY_SEED, seed);
       }
 
-      let address = await SecureStore.getItemAsync(KEY_ADDRESS);
+      let address = await store.get(KEY_ADDRESS);
       if (!address) {
         const digest = await Crypto.digestStringAsync(
           Crypto.CryptoDigestAlgorithm.SHA256,
           `halo:addr:${seed}`,
         );
         address = `mn_demo1${digest.slice(0, 52)}`;
-        await SecureStore.setItemAsync(KEY_ADDRESS, address);
+        await store.set(KEY_ADDRESS, address);
       }
 
       const coinPublicKey = await Crypto.digestStringAsync(
@@ -162,14 +207,14 @@ function localConnector(): Connector {
     },
 
     async disconnect() {
-      await SecureStore.deleteItemAsync(KEY_ADDRESS);
+      await store.remove(KEY_ADDRESS);
       // The seed is deliberately retained: wiping it would orphan every
       // commitment the user has already published, and they would silently
       // lose their match history. Use `wipeIdentity` for a real reset.
     },
 
     async sign(digest) {
-      const seed = await SecureStore.getItemAsync(KEY_SEED);
+      const seed = await store.get(KEY_SEED);
       if (!seed) throw new Error('No local key');
       return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, `${seed}:${digest}`);
     },
@@ -179,8 +224,8 @@ function localConnector(): Connector {
 /** Full local reset. Destroys the seed, and with it every past commitment. */
 export async function wipeIdentity(): Promise<void> {
   await Promise.all([
-    SecureStore.deleteItemAsync(KEY_SEED),
-    SecureStore.deleteItemAsync(KEY_ADDRESS),
+    store.remove(KEY_SEED),
+    store.remove(KEY_ADDRESS),
   ]);
 }
 
@@ -217,8 +262,8 @@ export async function restoreSession(): Promise<{
   if (await isWalletAppInstalled()) return null;
 
   const [address, seed] = await Promise.all([
-    SecureStore.getItemAsync(KEY_ADDRESS),
-    SecureStore.getItemAsync(KEY_SEED),
+    store.get(KEY_ADDRESS),
+    store.get(KEY_SEED),
   ]);
   // Both, not either: an address without its seed cannot sign, and returning
   // it would produce a session that fails at the first proof.
