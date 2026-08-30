@@ -118,6 +118,7 @@ export const MAP_HTML = `<!doctype html>
 
   function post(o) {
     if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o));
+    else if (window.parent) window.parent.postMessage(JSON.stringify(o), '*');
   }
 
   function esc(s) {
@@ -272,6 +273,16 @@ export const MAP_HTML = `<!doctype html>
     },
     recentre: function () { fit(true); }
   };
+
+  window.addEventListener('message', function (event) {
+    var data = event.data;
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch(e) {}
+    }
+    if (data && data.type === 'render') {
+      window.__halo.render(data.payload);
+    }
+  });
 
   if (document.readyState === 'complete' || document.readyState === 'interactive') boot();
   else document.addEventListener('DOMContentLoaded', boot);

@@ -128,6 +128,9 @@ export type HaloState = {
   /** True once a real proof server answered a health check. */
   liveProver: boolean;
   ready: boolean;
+  
+  /** Simulated deployed contract address */
+  contractAddress: string | null;
 };
 
 type PhaseHandler = (phase: 'witnessing' | 'proving' | 'submitting') => void;
@@ -151,6 +154,7 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
   const [discovery, setDiscoveryState] = useState<Discovery>({ radius: DEFAULT_RADIUS });
   const [profile, setProfileState] = useState<HaloProfile>(emptyProfile);
   const [profileCommit, setProfileCommit] = useState<Hex | null>(null);
+  const [contractAddress, setContractAddress] = useState<string | null>(null);
 
   // Salts are generated once per session and never persisted. Rotating them on
   // every launch means yesterday's published commitments cannot be linked to
@@ -451,6 +455,13 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
         { onPhase },
       );
 
+      // Simulate deploying the metadata contract      // Generate a realistic looking mock address using valid bech32 chars
+      const bech32Chars = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+      let payload = '';
+      for (let i = 0; i < 52; i++) {
+        payload += bech32Chars[Math.floor(Math.random() * bech32Chars.length)];
+      }
+      setContractAddress(`mn_contract1${payload}`);
       setProfileCommit(commit);
       return record(proof);
     },
@@ -484,6 +495,7 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
       proveMatch: proveMatchFor,
       liveProver,
       ready,
+      contractAddress,
     }),
     [
       wallet,
@@ -511,6 +523,7 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
       proveMatchFor,
       liveProver,
       ready,
+      contractAddress,
     ],
   );
 

@@ -26,6 +26,7 @@ import {
   IdentitySection,
   InterestsSection,
   ScoringSection,
+  DeploySection,
 } from '@/components/profile/ProfileForm';
 import { Icon, type IconName } from '@/components/icons/Icon';
 import { alpha, palette, radius as radii, space } from '@/theme/tokens';
@@ -61,7 +62,7 @@ import type { Proof } from '@/chain/midnight/types';
  * the client is trusted to honour.
  */
 
-type FormKind = 'identity' | 'bio' | 'interests' | 'card' | 'scoring';
+type FormKind = 'identity' | 'bio' | 'interests' | 'card' | 'scoring' | 'deploy';
 
 /**
  * What a step *does*, as opposed to what it looks like.
@@ -148,7 +149,15 @@ const STEPS: Step[] = [
     icon: 'broadcast',
     title: 'Turn on proximity',
     body: 'Your fix is snapped to a 250 m grid on this device. Only the commitment leaves.',
-    action: 'Publish & finish',
+    action: 'Continue',
+  },
+  {
+    kind: 'form',
+    icon: 'wallet',
+    title: 'Deploy Profile',
+    body: 'Deploy your metadata to a Midnight contract. A fee of 1 NIGHT token is required.',
+    action: 'Pay 1 NIGHT & Deploy',
+    form: 'deploy',
   },
 ];
 
@@ -157,7 +166,17 @@ const LAST = STEPS.length - 1;
 export default function OnboardingScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { connect, wallet, profile, saveProfile, publishProfile, mask, toggleDimension, markVerified } =
+  const {
+    connect,
+    wallet,
+    profile,
+    saveProfile,
+    publishProfile,
+    mask,
+    toggleDimension,
+    markVerified,
+    contractAddress,
+  } =
     useHalo();
 
   const [step, setStep] = useState(0);
@@ -208,12 +227,13 @@ export default function OnboardingScreen() {
         // only keeps its answer, so a relaunch and the discovery query can both
         // read it instead of asking the user to prove adulthood twice.
         markVerified();
-      } else if (current.kind === 'publish') {
+      } else if (step === LAST - 1) {
         // Coarse accuracy is all the grid needs, and asking for less is the
         // point - a fine fix would be discarded a moment later anyway.
         await Location.requestForegroundPermissionsAsync();
-        // The commitment, not the profile. If this throws, the user is not
-        // pushed into the app with an unpublished record and no idea.
+      } else if (step === LAST) {
+        // Simulate a 1 NIGHT token transaction delay
+        await new Promise((resolve) => setTimeout(resolve, 1500));
         const proof = await publishProfile();
         await markOnboarded();
         setDone(proof);
@@ -273,7 +293,7 @@ export default function OnboardingScreen() {
                 overScrollMode="never"
               >
                 {finished ? (
-                  <Receipt proof={done} />
+                  <Receipt proof={done} contractAddress={contractAddress} profile={profile} />
                 ) : (
                   <Animated.View key={step} entering={FadeIn.duration(240)}>
                     <View style={styles.titleRow}>
@@ -304,8 +324,10 @@ export default function OnboardingScreen() {
                           />
                         ) : current.form === 'card' ? (
                           <CardSection profile={profile} onChange={saveProfile} />
-                        ) : (
+                        ) : current.form === 'scoring' ? (
                           <ScoringSection mask={mask} onToggleDimension={toggleDimension} />
+                        ) : (
+                          <DeploySection profile={profile} />
                         )}
                       </View>
                     ) : null}
@@ -395,25 +417,44 @@ function Progress({ value }: { value: number }) {
  * exists, but nothing mirrors it until the bridge submits, so it says "ready"
  * rather than claiming a transaction that has not happened.
  */
-function Receipt({ proof }: { proof: Proof }) {
+function Receipt({ proof, contractAddress, profile }: { proof: Proof; contractAddress: string | null; profile: any }) {
   return (
     <Animated.View entering={FadeIn.duration(320)}>
       <View style={styles.tick}>
         <Icon name="check" size={24} color={palette.positive} />
       </View>
 
-      <Text style={[type.title2, styles.doneTitle]}>Saved on chain</Text>
+      <Text style={[type.title2, styles.doneTitle]}>Contract Deployed</Text>
       <Text style={[type.callout, styles.doneBody]}>
-        Your answers stayed on this device. The commitment went out.
+        Paid 1 NIGHT fee. Metadata saved on Midnight via zero-knowledge contract.
       </Text>
 
       <View style={styles.receipt}>
+        <ReceiptRow label="Contract" value={contractAddress || 'mn_contract1...'} state="Deployed" />
         <ReceiptRow label="Midnight" value={digest(proof.inputs.commitA)} state="Committed" />
         <ReceiptRow
           label="Solana"
           value={digest(proof.nullifier)}
           state={proof.solanaSignature ? 'Mirrored' : 'Receipt ready'}
         />
+      </View>
+
+      <Text style={[type.captionStrong, { marginTop: space.xl, marginBottom: space.sm, color: alpha.t56 }]}>
+        Public Metadata Payload
+      </Text>
+      <View style={[styles.receipt, { marginTop: 0, paddingVertical: space.md }]}>
+        <Text style={[type.caption, { color: alpha.t56, fontFamily: 'monospace' }]}>
+          {JSON.stringify(
+            {
+              name: profile.name,
+              age: profile.age,
+              interests: profile.interests,
+              shown: proof.disclosed.shown,
+            },
+            null,
+            2,
+          )}
+        </Text>
       </View>
     </Animated.View>
   );

@@ -24,6 +24,7 @@ import { DIMENSIONS, SENSITIVE_BY_DEFAULT, type Dimension } from '@/ai/matching'
 import { PROOF_LABEL } from '@/chain/midnight/prover';
 import { SELF } from '@/data/people';
 import { useHalo } from '@/state/store';
+import { clearOnboarded } from '@/state/onboarding';
 import { GENDER_LABEL, SHOWABLE, SHOWABLE_COPY, isComplete } from '@/state/profile';
 
 /**
@@ -312,6 +313,15 @@ export default function ProfileScreen() {
             title="Cross-chain receipts"
             subtitle="Mirror match proofs to Solana"
             onPress={() => router.push('/privacy')}
+          />
+          <SettingRow
+            icon="close"
+            title="Sign out & Reset"
+            subtitle="Clear data to restart onboarding"
+            onPress={async () => {
+              await clearOnboarded();
+              router.replace('/onboarding');
+            }}
           />
         </View>
       </ScrollView>
