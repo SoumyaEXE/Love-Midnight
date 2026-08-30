@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
@@ -53,6 +53,23 @@ export function FaceCapture({
   const [capturing, setCapturing] = useState(false);
   const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+  /**
+   * Whether the sensor has actually started.
+   *
+   * A handset opens a real camera session, which takes a moment; the preview is
+   * black until it finishes and a shutter fired into that window returns a black
+   * frame rather than an error. A browser reattaches one `<video>` element fast
+   * enough that this never shows, which is why it took a phone to find.
+   */
+  const [live, setLive] = useState(false);
+  /**
+   * Set when the sensor has had long enough and still has not reported in.
+   *
+   * `onCameraReady` is not guaranteed to arrive on every device, and a button
+   * that waits forever for a callback that is never coming is worse than one
+   * that lets a probably-warm camera try.
+   */
+  const [waitedOut, setWaitedOut] = useState(false);
 
   /**
    * The angle being asked for.
@@ -68,17 +85,50 @@ export function FaceCapture({
 
   const taken = POSES.filter((p) => shots[p.pose]).length;
 
+  /** The viewfinder is on screen. False once all three exist, true again on a redo. */
+  const finderUp = target !== null;
+
+  // The camera only exists while the viewfinder does, so its readiness has to
+  // die with it - carrying a stale `true` into a remount is exactly the bug
+  // this state was added to close.
+  useEffect(() => {
+    if (finderUp) return;
+    setLive(false);
+    setWaitedOut(false);
+  }, [finderUp]);
+
+  useEffect(() => {
+    if (!finderUp || live) return;
+    const timer = setTimeout(() => setWaitedOut(true), 6000);
+    return () => clearTimeout(timer);
+  }, [finderUp, live]);
+
+  /** Safe to fire the shutter: reported ready, or waited long enough to stop asking. */
+  const armed = live || waitedOut;
+
   const capture = useCallback(async () => {
-    if (!camera.current || !target || capturing) return;
+    // Genuine no-ops: there is nothing to shoot, or a shot is already in
+    // flight. Everything else that can go wrong says so - a shutter button
+    // that quietly does nothing is indistinguishable from a broken one.
+    if (!target || capturing || !armed) return;
 
     setCapturing(true);
     setFailed(null);
     try {
+      if (!camera.current) {
+        throw new Error('The camera is not attached yet. Give it a moment, then try again.');
+      }
       const picture = await camera.current.takePictureAsync({ quality: 0.6 });
       // A camera that hands back nothing is a real outcome on the web, where
       // the video track can end between the tap and the grab. Treating it as a
       // failure beats writing `undefined` into a slot that then looks filled.
-      if (!picture?.uri) throw new Error('The camera returned an empty frame. Try again.');
+      //
+      // The size check is the same argument for a handset: a session that has
+      // not finished opening answers with a frame that has a URI and no
+      // pixels, and a zero-sized shot must not advance the sequence.
+      if (!picture?.uri || !picture.width || !picture.height) {
+        throw new Error('The camera returned an empty frame. Try again.');
+      }
 
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setShots((prev) => ({
@@ -96,7 +146,7 @@ export function FaceCapture({
     } finally {
       setCapturing(false);
     }
-  }, [target, capturing]);
+  }, [target, capturing, armed]);
 
   const submit = useCallback(async () => {
     setSending(true);
@@ -153,22 +203,53 @@ export function FaceCapture({
   return (
     <View>
       {target ? (
-        <Animated.View key={target.pose} entering={FadeIn.duration(220)}>
+        <View>
+          {/* Mounted once for the whole sequence, and deliberately not keyed to
+              the pose. Keying it here tore the native camera session down and
+              built a new one after every capture, so the second and third taps
+              landed on a sensor that had not finished opening: no usable frame,
+              and the step counter moved on regardless. Only the caption and the
+              pill change between angles now - the camera never blinks. */}
           <View style={styles.viewfinder}>
-            <CameraView ref={camera} facing="front" style={StyleSheet.absoluteFill} />
+            <CameraView
+              ref={camera}
+              facing="front"
+              style={StyleSheet.absoluteFill}
+              onCameraReady={() => setLive(true)}
+              onMountError={() =>
+                setFailed('The camera would not start. Close any other app using it, then try again.')
+              }
+            />
 
-            {/* Both overlays are inert to touch so the viewfinder never eats a
+            {/* Every overlay is inert to touch so the viewfinder never eats a
                 press meant for anything underneath it. */}
             <View style={styles.oval} pointerEvents="none" />
-            <View style={styles.stepPill} pointerEvents="none">
+            <Animated.View
+              key={target.pose}
+              entering={FadeIn.duration(220)}
+              style={styles.stepPill}
+              pointerEvents="none"
+            >
               <Text style={type.micro}>
                 {taken + 1} of {POSES.length} · {target.label}
               </Text>
-            </View>
+            </Animated.View>
+
+            {armed ? null : (
+              <View style={styles.warming} pointerEvents="none">
+                <Text style={[type.caption, styles.warmingText]}>Starting the camera…</Text>
+              </View>
+            )}
           </View>
 
-          <Text style={[type.callout, styles.instruction]}>{target.instruction}</Text>
-        </Animated.View>
+          <Animated.Text
+            key={target.pose}
+            entering={FadeIn.duration(220)}
+            style={[type.callout, styles.instruction]}
+          >
+            {target.instruction}
+          </Animated.Text>
+        </View>
       ) : (
         <Animated.View entering={FadeIn.duration(220)} style={styles.ready}>
           <Icon name="check" size={20} color={palette.positive} />
@@ -197,10 +278,20 @@ export function FaceCapture({
       {failed ? <Text style={[type.caption, styles.failed]}>{failed}</Text> : null}
 
       <MetalButton
-        label={target ? `Take the ${target.label.toLowerCase()} photo` : 'Upload for review'}
+        label={
+          target
+            ? armed
+              ? `Take the ${target.label.toLowerCase()} photo`
+              : 'Starting the camera…'
+            : 'Upload for review'
+        }
         variant="violet"
         size="lg"
         fullWidth
+        // Held rather than allowed-and-then-rejected: a shutter that fires into
+        // a warming sensor produces a black frame, and a black frame that looks
+        // like a successful capture is the worst of the three outcomes.
+        disabled={target ? !armed : false}
         loading={capturing || sending}
         onPress={() => void (target ? capture() : submit())}
         style={styles.action}
@@ -406,6 +497,19 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: alpha.t14,
   },
+  /** Covers the black preview while the session opens, so the wait has a reason. */
+  warming: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(7,6,10,0.72)',
+  },
+  warmingText: { color: alpha.t56 },
+
   instruction: { marginTop: space.lg, textAlign: 'center', lineHeight: 20 },
 
   ready: {

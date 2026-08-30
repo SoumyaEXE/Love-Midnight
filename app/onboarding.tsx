@@ -383,7 +383,14 @@ export default function OnboardingScreen() {
                             showErrors={showErrors}
                           />
                         ) : current.form === 'face' ? (
-                          <FaceCapture />
+                          // The capture UI is taller than the receipt that
+                          // replaces it, so a user who scrolled down to reach
+                          // the upload button is left staring below the
+                          // confirmation they just earned. Put them back at the
+                          // top of the panel to read it.
+                          <FaceCapture
+                            onSubmitted={() => panel.current?.scrollTo({ y: 0, animated: true })}
+                          />
                         ) : current.form === 'card' ? (
                           <CardSection profile={profile} onChange={saveProfile} />
                         ) : current.form === 'scoring' ? (

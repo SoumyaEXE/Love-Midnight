@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,6 +32,7 @@ export default function VerifyFaceScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { faceCheck } = useHalo();
+  const scroller = useRef<ScrollView>(null);
 
   const submitted = faceCheck.status !== 'none';
 
@@ -40,6 +41,7 @@ export default function VerifyFaceScreen() {
       <GlowBackdrop intensity={0.75} origin={1.1} />
 
       <ScrollView
+        ref={scroller}
         contentContainerStyle={{
           paddingTop: insets.top + space.sm,
           paddingBottom: insets.bottom + space['5xl'],
@@ -76,7 +78,12 @@ export default function VerifyFaceScreen() {
 
         <View style={styles.section}>
           <LiquidGlass radius={radii.sheet} style={styles.panel} intensity={50}>
-            <FaceCapture />
+            {/* Submitting removes the briefing above and shortens the panel, so
+                whatever the user was looking at moves. Return them to the top,
+                where the confirmation now is. */}
+            <FaceCapture
+              onSubmitted={() => scroller.current?.scrollTo({ y: 0, animated: true })}
+            />
           </LiquidGlass>
         </View>
 
