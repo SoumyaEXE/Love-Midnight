@@ -23,8 +23,31 @@ import type { DistanceBucket } from '@/chain/midnight/types';
  * snap to a lattice.
  */
 
-/** The demo city. Manhattan, because the roster's areas are Manhattan areas. */
-export const ORIGIN = { lat: 40.7686, lng: -73.9782 } as const;
+export type LatLng = { lat: number; lng: number };
+
+/**
+ * Where the roster is drawn when there is no fix to draw it around.
+ *
+ * Manhattan, because the roster's areas are Manhattan areas. This used to be
+ * *the* origin rather than the fallback, which is why the map showed a New York
+ * street grid to a user standing in Kolkata: `placeSubjects` orbited everyone
+ * around this constant and `LeafletMap` centred the viewport on it, so a real
+ * fix had nowhere to go even once one existed.
+ *
+ * It is still the right answer before the first fix arrives - an empty map with
+ * no basemap under it reads as broken - but it is now only that.
+ */
+export const ORIGIN: LatLng = { lat: 40.7686, lng: -73.9782 };
+
+/**
+ * Disc radius for someone whose real position is known, in metres.
+ *
+ * The roster's discs are sized to a *bucket*, which is a claim about distance
+ * and nothing else. A discovered user is different: their record is a point,
+ * already snapped to the 250 m publishing grid, so the honest disc is the cell
+ * itself rather than a ring fabricated from a hash.
+ */
+export const REAL_AREA_M = 250;
 
 /** Metres the bucket actually proves. These match `proximity.compact`. */
 export const BUCKET_REACH_M: Record<DistanceBucket, number> = {
@@ -60,7 +83,22 @@ export type PlacedSubject = {
   bucket: DistanceBucket;
 };
 
-export type PlaceInput = { id: string; bucket: DistanceBucket };
+/**
+ * A subject to place.
+ *
+ * `lat`/`lng` are present for a discovered user and absent for a roster
+ * persona, and that difference is the whole reason this type is a union in
+ * spirit. A roster persona has no position - only a bucket - so one is
+ * fabricated for it. A discovered user *has* a position, already coarsened to
+ * the grid before it was published, and fabricating a bearing for that would
+ * throw away the real answer to draw a fake one.
+ */
+export type PlaceInput = {
+  id: string;
+  bucket: DistanceBucket;
+  lat?: number;
+  lng?: number;
+};
 
 /**
  * Offsets a lat/lng by a metre vector. Equirectangular, which is exact enough
@@ -77,14 +115,43 @@ export function offsetMetres(
   return { lat: lat + dLat, lng: lng + dLng };
 }
 
-export function placeSubjects(subjects: PlaceInput[]): PlacedSubject[] {
+/**
+ * Places every subject around `origin`.
+ *
+ * `origin` is the user's own position when there is one. Passing it in rather
+ * than reading the module constant is what lets the roster orbit wherever the
+ * user actually is, instead of orbiting Manhattan while the user stands
+ * somewhere else.
+ *
+ * Subjects carrying real coordinates skip the fabrication entirely and are
+ * returned at the point they published.
+ */
+export function placeSubjects(
+  subjects: PlaceInput[],
+  origin: LatLng = ORIGIN,
+): PlacedSubject[] {
+  // Only fabricated subjects compete for bearings. A discovered user occupies
+  // no slot in a ring, so counting them here would leave gaps in the spread.
+  const fabricated = subjects.filter((s) => s.lat === undefined || s.lng === undefined);
+
   // Rank within a bucket so a ring's occupants spread around it rather than
   // stacking on one bearing.
   const totals = new Map<number, number>();
-  for (const s of subjects) totals.set(s.bucket, (totals.get(s.bucket) ?? 0) + 1);
+  for (const s of fabricated) totals.set(s.bucket, (totals.get(s.bucket) ?? 0) + 1);
   const seen = new Map<number, number>();
 
   return subjects.map((subject) => {
+    // A real position is the answer. Nothing below it applies.
+    if (subject.lat !== undefined && subject.lng !== undefined) {
+      return {
+        id: subject.id,
+        lat: subject.lat,
+        lng: subject.lng,
+        area: REAL_AREA_M,
+        bucket: subject.bucket,
+      };
+    }
+
     const rank = seen.get(subject.bucket) ?? 0;
     seen.set(subject.bucket, rank + 1);
 
@@ -103,8 +170,8 @@ export function placeSubjects(subjects: PlaceInput[]): PlacedSubject[] {
     const distance = reach * span;
 
     const { lat, lng } = offsetMetres(
-      ORIGIN.lat,
-      ORIGIN.lng,
+      origin.lat,
+      origin.lng,
       Math.cos(angle) * distance,
       Math.sin(angle) * distance,
     );

@@ -97,7 +97,22 @@ export default function TabsLayout() {
             triggers paint over it. The bar itself stays transparent: giving it
             a background would be what the BlurView samples, and the glass would
             show a flat colour instead of the content behind it. */}
-        <GlassPanel radius={radii.pill} style={styles.glass} specular={0.55} opacity={0.5} />
+        <GlassPanel
+          radius={radii.pill}
+          style={styles.glass}
+          specular={0.55}
+          /* Heavier than the GlassPanel default of 80, and heavier than any
+             other surface in the app. The dock sits over scrolling content at
+             the very bottom of the screen, where the backdrop is bloom and
+             high-contrast card edges - at a lighter blur those edges stay
+             legible through the bar and read as smear rather than as glass.
+             100 is the ceiling for expo-blur. */
+          intensity={100}
+          /* Lower opacity leans the material on the blur rather than on a
+             wash. Raising both would darken the bar into something closer to
+             a solid, which is the opposite of the ask. */
+          opacity={0.42}
+        />
 
         {/* Violet wash over the glass.
             The reference bar is not dark glass sitting on a violet page - it is

@@ -6,7 +6,7 @@ import { alpha, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
 import { MAP_HTML } from '@/components/map/mapDocument';
 import { cartoTileTemplate } from '@/config/map';
-import { BUCKET_REACH_M, ORIGIN, placeSubjects } from '@/components/map/placement';
+import { BUCKET_REACH_M, ORIGIN, placeSubjects, type LatLng } from '@/components/map/placement';
 import { gravatarUrl } from '@/data/gravatar';
 import { DISTANCE_LABEL, type DistanceBucket } from '@/chain/midnight/types';
 
@@ -24,10 +24,14 @@ import { DISTANCE_LABEL, type DistanceBucket } from '@/chain/midnight/types';
  * `placement.ts` for why the bearing is fabricated rather than derived.
  *
  * One caveat worth stating plainly, because it is a genuine cost of using real
- * tiles: tile requests carry the viewport to CARTO's CDN. That viewport is the
- * demo city, identical for every user and unrelated to where anyone actually
- * is, so nothing about a user leaks - but a self-hosted or bundled tile set is
- * the answer if this ever centres on a real location.
+ * tiles, and it changed when this map started centring on the user: tile
+ * requests carry the viewport to CARTO's CDN. It used to be the demo city,
+ * identical for everyone and unrelated to where anyone was, so nothing leaked.
+ * With `center` supplied it is the user's own 250 m cell, which means CARTO
+ * learns roughly where a user is whenever the map is opened. That is a real
+ * disclosure, it is to a CDN rather than to another user, and the answer if it
+ * ever matters is a self-hosted or bundled tile set - not a fake viewport,
+ * which would only move the lie into the UI.
  */
 
 export type MapSubject = {
@@ -37,6 +41,12 @@ export type MapSubject = {
   bucket: DistanceBucket;
   online?: boolean;
   area?: string;
+  /**
+   * Real published position, for a discovered user. Absent for a roster
+   * persona, which has only a bucket and gets a fabricated bearing instead.
+   */
+  lat?: number;
+  lng?: number;
 };
 
 export type LeafletMapProps = {
@@ -47,6 +57,12 @@ export type LeafletMapProps = {
   onSelect?: (id: string) => void;
   /** Widest bucket being broadcast. Areas beyond it dim rather than vanish. */
   maxBucket?: DistanceBucket;
+  /**
+   * The user's own position, snapped to the publishing grid. The map centres
+   * here and the roster is drawn around it. Null before the first fix, which
+   * falls back to the demo city rather than to an empty viewport.
+   */
+  center?: LatLng | null;
   /** Off when the user has gone invisible. Stops the pulse. */
   live?: boolean;
   /**
@@ -84,6 +100,7 @@ export function LeafletMap({
   selectedId,
   onSelect,
   maxBucket = 3,
+  center = null,
   live = true,
   onInteractionChange,
   style,
@@ -108,12 +125,15 @@ export function LeafletMap({
     };
   }, [subjects]);
 
-  const placed = useMemo(() => placeSubjects(subjects), [subjects]);
+  // The user's own cell when there is one, the demo city until then.
+  const origin = center ?? ORIGIN;
+
+  const placed = useMemo(() => placeSubjects(subjects, origin), [subjects, origin.lat, origin.lng]);
 
   const payload = useMemo<Payload>(() => {
     const byId = new Map(placed.map((p) => [p.id, p]));
     return {
-      self: { lat: ORIGIN.lat, lng: ORIGIN.lng },
+      self: { lat: origin.lat, lng: origin.lng },
       live,
       label: DISTANCE_LABEL[maxBucket],
       // The chips name a bucket; the map states what the bucket is worth in
@@ -122,14 +142,20 @@ export function LeafletMap({
       // Changing the filter is the only thing that should re-frame the map. A
       // selection or a late-arriving avatar must not yank the viewport out from
       // under someone who has panned somewhere.
-      fitKey: `b${maxBucket}:${subjects.length}`,
+      //
+      // The origin is in the key because arriving at a *different city* is the
+      // one other thing that must re-frame: the first fix replaces the demo
+      // origin, and without this the viewport would stay over Manhattan with
+      // every marker several thousand kilometres off screen. Rounded to ~100 m
+      // so an ordinary walk does not keep yanking the frame back.
+      fitKey: `b${maxBucket}:${subjects.length}:${origin.lat.toFixed(3)},${origin.lng.toFixed(3)}`,
       subjects: subjects.map((s) => {
         const p = byId.get(s.id);
         return {
           id: s.id,
           name: s.name,
-          lat: p?.lat ?? ORIGIN.lat,
-          lng: p?.lng ?? ORIGIN.lng,
+          lat: p?.lat ?? origin.lat,
+          lng: p?.lng ?? origin.lng,
           area: p?.area ?? 500,
           avatar: avatars[s.id] ?? null,
           online: !!s.online,
@@ -138,7 +164,7 @@ export function LeafletMap({
         };
       }),
     };
-  }, [subjects, placed, avatars, selectedId, maxBucket, live]);
+  }, [subjects, placed, avatars, selectedId, maxBucket, live, origin.lat, origin.lng]);
 
   useEffect(() => {
     if (!ready) return;

@@ -16,8 +16,10 @@ import { alpha, layout, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
 import { PEOPLE, PEOPLE_BY_ID, SELF } from '@/data/people';
 import { useHalo } from '@/state/store';
+import { useFirebase } from '@/state/firebase';
 import { useNearbyUsers } from '@/hooks/useNearbyUsers';
-import { formatRadius } from '@/firebase/geo';
+import { formatRadius, snapToGrid } from '@/firebase/geo';
+import { BUCKET_REACH_M } from '@/components/map/placement';
 import { DISTANCE_LABEL, type DistanceBucket, type MatchBand } from '@/chain/midnight/types';
 
 /**
@@ -32,6 +34,22 @@ import { DISTANCE_LABEL, type DistanceBucket, type MatchBand } from '@/chain/mid
 
 const BUCKETS: DistanceBucket[] = [0, 1, 2, 3];
 
+/**
+ * The bucket a measured distance falls into.
+ *
+ * A discovered user has a real distance, not a proved bucket, but the chips
+ * filter on buckets and the map dims on buckets - so a measurement is expressed
+ * in the same vocabulary rather than given a parallel one. The thresholds are
+ * `BUCKET_REACH_M`, so "Walkable" means the same number of metres whether it
+ * was proved or measured.
+ */
+function bucketForDistance(metres: number): DistanceBucket {
+  if (metres <= BUCKET_REACH_M[0]) return 0;
+  if (metres <= BUCKET_REACH_M[1]) return 1;
+  if (metres <= BUCKET_REACH_M[2]) return 2;
+  return 3;
+}
+
 export default function HomeScreen() {
   const router = useRouter();
   // Tab screens are detached when inactive, so the map's pulse would restart on
@@ -42,6 +60,7 @@ export default function HomeScreen() {
   const { visibility, setVisibility, proveProximity, proveMatch, mask, selfVector, discovery } =
     useHalo();
   const nearbyLive = useNearbyUsers();
+  const { here } = useFirebase();
 
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<'wink' | 'match' | null>(null);
@@ -53,17 +72,50 @@ export default function HomeScreen() {
   // Slightly taller than wide, the way a plan view wants to be.
   const mapHeight = Math.min(mapWidth * 1.18, 500);
 
+  /**
+   * Where the map is centred, and where the roster is drawn around.
+   *
+   * Snapped to the same 250 m grid the app publishes on. The raw fix would
+   * re-render the map on every GPS twitch, and would also be a *finer* position
+   * than this app is willing to hold anywhere else - centring on it would put
+   * the exact fix into the tile request. Null until the first fix, which leaves
+   * `LeafletMap` on its demo origin rather than on an empty viewport.
+   */
+  const center = useMemo(() => {
+    if (!here) return null;
+    const cell = snapToGrid(here);
+    return { lat: cell.latitude, lng: cell.longitude };
+  }, [here?.latitude, here?.longitude]);
+
+  /**
+   * What the map draws: only people discovery actually found.
+   *
+   * The roster personas are deliberately absent. They carry no position, so
+   * everything about where they appeared was fabricated - a bearing from a hash
+   * of their id, at a radius from their bucket - and on a map centred on the
+   * user's real cell that reads as five strangers standing around your street,
+   * which is a claim the data does not support. They remain in the lists below,
+   * where a bucket is all they ever claim to be.
+   *
+   * So an empty map means nobody is nearby, which is the honest answer and a
+   * legible one. The discovered users carry the position they published,
+   * already coarsened to the grid, and are drawn there.
+   */
   const subjects = useMemo(
     () =>
-      PEOPLE.filter((p) => p.id !== 'sophie').map((p) => ({
-        id: p.id,
-        name: p.name,
-        email: p.email,
-        bucket: p.bucket,
-        online: p.online,
-        area: p.area,
+      nearbyLive.users.map((u) => ({
+        id: u.wallet,
+        name: u.profile.name,
+        // `profile.avatar` is the gravatar key, which is what `Avatar` and the
+        // map marker both take as `email`. Same as `NearbyList` does.
+        email: u.profile.avatar,
+        bucket: bucketForDistance(u.distance),
+        online: u.online,
+        area: u.place ?? undefined,
+        lat: u.latitude,
+        lng: u.longitude,
       })),
-    [],
+    [nearbyLive.users],
   );
 
   /** The chips filter the list and dim the map from one piece of state. */
@@ -76,6 +128,25 @@ export default function HomeScreen() {
   );
 
   const person = selected ? PEOPLE_BY_ID.get(selected) ?? null : null;
+
+  /**
+   * A marker tap.
+   *
+   * Roster ids open the profile sheet, which is built from the roster. A
+   * discovered user has no roster entry and no sheet to open, so it goes
+   * straight to the conversation - the same destination `NearbyList` uses for
+   * the same person, rather than a second way to reach them.
+   */
+  const onSelectSubject = useCallback(
+    (id: string) => {
+      if (PEOPLE_BY_ID.has(id)) {
+        setSelected(id);
+        return;
+      }
+      router.push(`/chat/${id}`);
+    },
+    [router],
+  );
 
   const minutesLeft = visibility.until
     ? Math.max(0, Math.round((visibility.until - Date.now()) / 60000))
@@ -188,11 +259,12 @@ export default function HomeScreen() {
             subjects={subjects}
             selectedId={selected}
             maxBucket={visibility.maxBucket}
+            center={center}
             // A sheet over the map means the map is not being looked at. Its
             // pulse is still costing frames underneath, and those frames are
             // the ones the sheet needs to spring up smoothly.
             live={visibility.live && isFocused && selected === null}
-            onSelect={setSelected}
+            onSelect={onSelectSubject}
             onInteractionChange={setMapHeld}
           />
         </View>
@@ -232,6 +304,8 @@ export default function HomeScreen() {
           loading={nearbyLive.loading}
           error={nearbyLive.error}
           active={nearbyLive.active}
+          blocker={nearbyLive.blocker}
+          onConnectWallet={() => router.push('/onboarding')}
           sharing={visibility.live}
           radiusLabel={formatRadius(discovery.radius)}
           onOpen={(user) => router.push(`/chat/${user.wallet}`)}

@@ -26,6 +26,7 @@
     "expo-status-bar": "~57.0.1",
     "expo-web-browser": "~57.0.2",
     "firebase": "^12.18.0",
+    "firebase-admin": "^14.3.0",
     "geofire-common": "^6.0.0",
     "react": "19.2.3",
     "react-native": "0.86.3",
@@ -41,6 +42,7 @@
   "devDependencies": {
     "@babel/core": "^7.29.7",
     "@types/react": "~19.2.2",
+    "@vercel/node": "^10.0.0",
     "babel-preset-expo": "^57.0.9",
     "esbuild": "^0.28.2",
     "typescript": "~6.0.3"

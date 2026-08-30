@@ -191,6 +191,50 @@ export async function resolveConnector(): Promise<Connector> {
   return (await isWalletAppInstalled()) ? deeplinkConnector() : localConnector();
 }
 
+/**
+ * Reconnects an identity established on an earlier launch.
+ *
+ * Nothing restored the wallet across a relaunch before this existed, and the
+ * consequence was larger than it looks: `onboarding` was the only caller of
+ * `connect()`, so the second cold start came up with `status: 'disconnected'`
+ * forever. `claimWallet` needs an address, `owned` never became true, and every
+ * feature keyed on it - publishing a position, presence, discovery, requests -
+ * silently did nothing while the UI blamed location permissions.
+ *
+ * The distinction from `connect()` is that this one *creates nothing*. It
+ * returns a session only when a local address is already in the keystore, so a
+ * user who has never onboarded still arrives at onboarding rather than being
+ * handed an identity they never asked for.
+ *
+ * Only the local transport can be restored silently. The deeplink transport
+ * needs the wallet app to answer, and reviving that without the user asking
+ * would throw them into another application on launch.
+ */
+export async function restoreSession(): Promise<{
+  connector: Connector;
+  state: WalletState;
+} | null> {
+  if (await isWalletAppInstalled()) return null;
+
+  const [address, seed] = await Promise.all([
+    SecureStore.getItemAsync(KEY_ADDRESS),
+    SecureStore.getItemAsync(KEY_SEED),
+  ]);
+  // Both, not either: an address without its seed cannot sign, and returning
+  // it would produce a session that fails at the first proof.
+  if (!address || !seed) return null;
+
+  const coinPublicKey = await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    `halo:coin:${seed}`,
+  );
+
+  return {
+    connector: localConnector(),
+    state: { status: 'connected', address, coinPublicKey, name: 'On-device key' },
+  };
+}
+
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }

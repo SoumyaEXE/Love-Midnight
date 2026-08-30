@@ -111,6 +111,40 @@ export async function publishLocation(
   return timestamp;
 }
 
+/**
+ * One position, for the map to centre on. Publishes nothing.
+ *
+ * Reading a fix and publishing a fix are different concerns, and conflating
+ * them was a bug: `here` was only ever assigned inside the sharing watcher, so
+ * a user who had not switched sharing on had no fix at all, and the map fell
+ * back to its demo origin and drew a New York street grid underneath them.
+ * Centring the map is not a disclosure - nothing leaves the device - so it does
+ * not need to wait on the switch that governs what does.
+ *
+ * Deliberately never prompts. `getForegroundPermissionsAsync` only reports what
+ * has already been granted; asking here would put a permission dialog on cold
+ * start, before the user has touched anything that implies location. The
+ * request belongs to the sharing toggle, which is where the user asked for it.
+ */
+export async function currentFix(): Promise<Coords | null> {
+  try {
+    const { status } = await Location.getForegroundPermissionsAsync();
+    if (status !== Location.PermissionStatus.GRANTED) return null;
+
+    const position = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+    return {
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude,
+    };
+  } catch {
+    // No fix is a normal outcome - indoors, airplane mode, a cold GPS. The map
+    // has a fallback origin for exactly this.
+    return null;
+  }
+}
+
 /** Stops being discoverable. The record is removed, not flagged. */
 export async function clearLocation(wallet: string): Promise<void> {
   await remove(ref(database, paths.location(wallet)));

@@ -25,6 +25,19 @@ export type ContactRequest = {
   personId: string;
   /** Display date, as it appears in the reference. */
   at: string;
+  /**
+   * Identity for a request that is not a roster persona.
+   *
+   * A real request is keyed by wallet, and a wallet resolves through nothing
+   * this component knows about - so the caller passes what it already read from
+   * the sender's published card. Absent for roster entries, which resolve from
+   * `PEOPLE_BY_ID` as before. Without this the sheet rendered `null` for every
+   * real request, which looked exactly like an empty inbox.
+   */
+  name?: string;
+  /** Gravatar key, as `Avatar` takes it. */
+  avatar?: string;
+  online?: boolean;
 };
 
 export type RequestsSheetProps = {
@@ -62,22 +75,27 @@ export function RequestsSheet({ visible, onClose, requests, onResolve }: Request
       ) : (
         <View style={styles.list}>
           {pending.map((request) => {
+            // Roster first, then whatever the caller supplied. A request with
+            // neither has nobody to name and is not renderable.
             const person = PEOPLE_BY_ID.get(request.personId);
-            if (!person) return null;
+            const name = person?.name ?? request.name;
+            const avatar = person?.email ?? request.avatar;
+            const online = person?.online ?? request.online ?? false;
+            if (!name || !avatar) return null;
 
             return (
               <View key={request.personId} style={styles.row}>
-                <Avatar email={person.email} size={44} online={person.online} />
+                <Avatar email={avatar} size={44} online={online} />
                 <View style={styles.rowText}>
                   <Text style={type.body} numberOfLines={1}>
-                    {person.name}
+                    {name}
                   </Text>
                   <Text style={[type.caption, styles.rowDate]}>{request.at}</Text>
                 </View>
 
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={`Decline ${person.name}`}
+                  accessibilityLabel={`Decline ${name}`}
                   hitSlop={6}
                   onPress={() => resolve(request.personId, false)}
                   style={[styles.circle, styles.decline]}
@@ -87,7 +105,7 @@ export function RequestsSheet({ visible, onClose, requests, onResolve }: Request
 
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={`Accept ${person.name}`}
+                  accessibilityLabel={`Accept ${name}`}
                   hitSlop={6}
                   onPress={() => resolve(request.personId, true)}
                   style={[styles.circle, styles.accept]}

@@ -4,6 +4,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Badge, PressableCard } from '@/components/ui/primitives';
 import { Icon } from '@/components/icons/Icon';
 import { formatDistance } from '@/firebase/geo';
+import type { NearbyBlocker } from '@/hooks/useNearbyUsers';
 import type { NearbyUser } from '@/firebase/types';
 import { alpha, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
@@ -30,6 +31,10 @@ export type NearbyListProps = {
   error: string | null;
   /** False when discovery cannot run at all - see the empty copy below. */
   active: boolean;
+  /** What is missing, when discovery is not running. Drives the copy. */
+  blocker?: NearbyBlocker;
+  /** Opens the wallet connection flow. Shown only for `no-wallet`. */
+  onConnectWallet?: () => void;
   sharing: boolean;
   radiusLabel: string;
   onOpen: (user: NearbyUser) => void;
@@ -41,10 +46,12 @@ export function NearbyList({
   loading,
   error,
   active,
+  blocker = 'none',
   sharing,
   radiusLabel,
   onOpen,
   onEnableSharing,
+  onConnectWallet,
 }: NearbyListProps) {
   if (!sharing) {
     return (
@@ -61,13 +68,40 @@ export function NearbyList({
     return <Empty icon="sad" title="Discovery unavailable" body={error} />;
   }
 
+  /*
+   * A stalled state names what is actually missing.
+   *
+   * Only `no-fix` and `claiming` are genuinely transient - the rest need the
+   * user to do something, and a spinner over them is a promise that resolves
+   * on its own, which these do not. A wallet in particular never arrives by
+   * waiting: nothing in this app connects one on the user's behalf.
+   */
+  if (blocker === 'no-wallet') {
+    return (
+      <Empty
+        icon="broadcast"
+        title="No wallet connected"
+        body="Discovery is keyed to your wallet address - it is what the database binds your profile, position and messages to. Connect one to appear on the map and to see who is nearby."
+        action={
+          onConnectWallet
+            ? { label: 'Connect wallet', onPress: onConnectWallet }
+            : undefined
+        }
+      />
+    );
+  }
+
   if (!active || loading) {
+    const label =
+      blocker === 'claiming'
+        ? 'Registering your wallet…'
+        : blocker === 'no-fix'
+          ? 'Waiting for a location fix…'
+          : 'Looking around you…';
     return (
       <View style={styles.pending}>
         <ActivityIndicator color={palette.violet} />
-        <Text style={[type.caption, styles.pendingLabel]}>
-          {active ? 'Looking around you…' : 'Waiting for a location fix…'}
-        </Text>
+        <Text style={[type.caption, styles.pendingLabel]}>{label}</Text>
       </View>
     );
   }
@@ -103,6 +137,8 @@ export function NearbyList({
             <Text style={[type.caption, styles.rowSub]} numberOfLines={1}>
               {user.place ? `${user.place} · ` : ''}
               {formatDistance(user.distance)}
+              {' · '}
+              {presenceLabel(user.online, user.lastSeen)}
             </Text>
             {user.profile.interests?.length ? (
               <Text style={[type.caption, styles.rowTags]} numberOfLines={1}>
@@ -145,6 +181,32 @@ function Empty({
       ) : null}
     </View>
   );
+}
+
+/**
+ * "Active now", or how long ago they were.
+ *
+ * Driven by the `presence/{wallet}` record, which the server maintains through
+ * an armed `onDisconnect` - so "active now" means a socket is genuinely open,
+ * not that a client claimed to be online on its way out and then crashed.
+ *
+ * Coarse on purpose, and increasingly coarse with age. A precise "last seen
+ * 3 minutes ago" is a surprisingly strong signal about somebody's routine when
+ * it is sampled repeatedly, and none of the value here needs that resolution.
+ */
+function presenceLabel(online: boolean, lastSeen: number): string {
+  if (online) return 'Active now';
+  if (!lastSeen) return 'Offline';
+
+  const minutes = Math.floor((Date.now() - lastSeen) / 60000);
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+
+  const days = Math.floor(hours / 24);
+  return days === 1 ? 'Yesterday' : `${days}d ago`;
 }
 
 const styles = StyleSheet.create({

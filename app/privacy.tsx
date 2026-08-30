@@ -50,8 +50,8 @@ const FILED_REPORTS: FiledReport[] = [
 export default function PrivacyScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { visibility, setVisibility, discovery, setDiscovery, proofs } = useHalo();
-  const { connection, sharing, publishedAt, error, dismissError } = useFirebase();
+  const { visibility, setVisibility, discovery, setDiscovery, proofs, wallet } = useHalo();
+  const { connection, sharing, owned, publishedAt, error, dismissError } = useFirebase();
 
   const [mirrorToSolana, setMirrorToSolana] = useState(false);
   const [allowCalls, setAllowCalls] = useState(false);
@@ -138,6 +138,8 @@ export default function PrivacyScreen() {
             <LocationStatus
               live={visibility.live}
               sharing={sharing}
+              owned={owned}
+              hasWallet={wallet.status === 'connected'}
               connection={connection}
               publishedAt={publishedAt}
             />
@@ -284,22 +286,38 @@ function LocationStatus({
 }: {
   live: boolean;
   sharing: boolean;
+  owned: boolean;
+  hasWallet: boolean;
   connection: ConnectionState;
   publishedAt: number | null;
 }) {
   const tone = !live ? alpha.t38 : sharing && connection === 'online' ? palette.positive : palette.negative;
 
+  /*
+   * `sharing` is false for four different reasons, and this used to report all
+   * of them as "Waiting for location permission". Three of them have nothing to
+   * do with permissions: no wallet, a claim still in flight, or a claim that
+   * failed. The common one was the first, and it sent people to system settings
+   * to grant a permission they had already granted.
+   *
+   * Ordered upstream-first, because a missing wallet is what makes the
+   * ownership claim impossible, which is what makes publishing impossible.
+   */
   const label = !live
     ? 'Location sharing off'
-    : connection === 'offline'
-      ? 'Offline - queued until the connection returns'
-      : connection === 'error'
-        ? 'Could not reach the realtime database'
-        : !sharing
-          ? 'Waiting for location permission'
-          : publishedAt
-            ? `Position published ${Math.max(0, Math.round((Date.now() - publishedAt) / 60_000))} min ago`
-            : 'Waiting for a fix';
+    : !hasWallet
+      ? 'No wallet connected - nothing can be published'
+      : !owned
+        ? 'Registering your wallet…'
+        : connection === 'offline'
+          ? 'Offline - queued until the connection returns'
+          : connection === 'error'
+            ? 'Could not reach the realtime database'
+            : !sharing
+              ? 'Waiting for location permission'
+              : publishedAt
+                ? `Position published ${Math.max(0, Math.round((Date.now() - publishedAt) / 60_000))} min ago`
+                : 'Waiting for a fix';
 
   return (
     <View style={styles.status}>

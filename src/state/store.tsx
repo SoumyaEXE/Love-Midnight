@@ -7,7 +7,7 @@ import {
   MODEL_WEIGHTS,
   type Dimension,
 } from '@/ai/matching';
-import { resolveConnector, type Connector } from '@/chain/midnight/connector';
+import { resolveConnector, restoreSession, type Connector } from '@/chain/midnight/connector';
 import {
   cellCommitment,
   modelCommitment,
@@ -181,6 +181,26 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
       if (!alive) return;
 
       if (storedProfile) setProfileState(storedProfile);
+
+      /*
+       * Bring back the wallet from the last launch.
+       *
+       * Every other preference here was already restored; the wallet was not,
+       * and it start()ed every cold boot at `disconnected`. Since `onboarding`
+       * is the only caller of `connect()`, the second launch never had an
+       * address - so `claimWallet` never ran, `owned` stayed false, and
+       * publishing, presence, discovery and requests all quietly did nothing
+       * while the UI reported it as a location-permission problem.
+       *
+       * `restoreSession` creates nothing. A user who has not onboarded gets
+       * null and still goes to onboarding.
+       */
+      const restored = await restoreSession().catch(() => null);
+      if (!alive) return;
+      if (restored) {
+        setConnector(restored.connector);
+        setWallet(restored.state);
+      }
 
       if (storedVerified) {
         try {

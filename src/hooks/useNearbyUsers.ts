@@ -21,6 +21,17 @@ import { useHalo } from '@/state/store';
 
 const RECENTER_FRACTION = 0.2;
 
+/**
+ * Why discovery is not running, when it is not.
+ *
+ * Worth naming rather than collapsing into one boolean. Every one of these
+ * states used to render as "Waiting for a location fix…", which is true in
+ * exactly one of them - and misleading in the common case, where the fix is
+ * fine and no wallet has been connected. Someone staring at that message will
+ * go and check their location permissions, which are not the problem.
+ */
+export type NearbyBlocker = 'none' | 'no-wallet' | 'claiming' | 'sharing-off' | 'no-fix';
+
 export type NearbyState = {
   users: NearbyUser[];
   /** True until the first result set arrives, or while there is no fix yet. */
@@ -28,6 +39,8 @@ export type NearbyState = {
   error: string | null;
   /** False when discovery cannot run: no wallet, no fix, sharing off. */
   active: boolean;
+  /** What is missing. `none` when discovery is running. */
+  blocker: NearbyBlocker;
 };
 
 export function useNearbyUsers(): NearbyState {
@@ -89,5 +102,21 @@ export function useNearbyUsers(): NearbyState {
     return () => watch.stop();
   }, [address, owned, visibility.live, center, discovery.radius]);
 
-  return { users, loading, error, active };
+  /*
+   * Ordered by what the user would have to fix first. A wallet is upstream of
+   * the ownership claim, which is upstream of everything the rules permit, so
+   * reporting "no fix" to someone with no wallet would send them to the wrong
+   * screen.
+   */
+  const blocker: NearbyBlocker = !address
+    ? 'no-wallet'
+    : !owned
+      ? 'claiming'
+      : !visibility.live
+        ? 'sharing-off'
+        : !here
+          ? 'no-fix'
+          : 'none';
+
+  return { users, loading, error, active, blocker };
 }

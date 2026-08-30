@@ -67,6 +67,21 @@ export type RemoteUser = {
   preferences?: RemotePreferences;
 };
 
+export type RequestStatus = 'pending' | 'accepted' | 'declined';
+
+/**
+ * A connection request, stored at `requests/{to}/{from}`.
+ *
+ * Keyed by recipient so an inbox is one subscription, and so the rules can
+ * express "only the recipient may change a status" from the path alone.
+ */
+export type ConnectionRequest = {
+  status: RequestStatus;
+  createdAt: number;
+  /** Optional opener. Capped at 200 characters by the rules. */
+  note?: string;
+};
+
 export type MessageType = 'text' | 'image' | 'location' | 'system' | 'reaction';
 
 export type RemoteMessage = {
@@ -90,6 +105,18 @@ export type RemoteConversationEntry = {
 export type NearbyUser = {
   wallet: string;
   profile: RemoteProfile;
+  /**
+   * The cell they published, carried through so the map can draw them where
+   * they actually are.
+   *
+   * This is the *snapped* point - the centre of a 250 m square, identical for
+   * everyone standing in it - and it is the only position that exists anywhere
+   * server-side. It is deliberately never rendered as a coordinate: the list
+   * shows a distance band and a city, and the map shows a disc the size of the
+   * cell. See `firebase/geo.snapToGrid`.
+   */
+  latitude: number;
+  longitude: number;
   /**
    * Metres between two snapped cells, measured with Haversine. Carries the
    * grid's error on both sides, which is why `formatDistance` refuses to

@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>MIDN8 API</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 3rem auto; max-width: 34rem; padding: 0 1.25rem;
+         background: #0b0b0f; color: #e7e7ea; }
+  code { background: #1a1a21; padding: .15rem .4rem; border-radius: 4px; }
+  li { margin: .4rem 0; }
+</style>
+<h1>MIDN8 API</h1>
+<p>Serverless endpoints for the MIDN8 app. The app itself is not served here.</p>
+<ul>
+  <li><code>POST /api/register</code> — bind a wallet to a session</li>
+  <li><code>POST /api/requests/send</code> — send a connection request</li>
+  <li><code>POST /api/requests/accept</code> — accept one</li>
+</ul>
+<p>All endpoints require <code>Authorization: Bearer &lt;Firebase ID token&gt;</code>.</p>

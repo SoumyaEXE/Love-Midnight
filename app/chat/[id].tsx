@@ -22,9 +22,11 @@ import { Icon } from '@/components/icons/Icon';
 import { alpha, palette, radius as radii, shadow, space } from '@/theme/tokens';
 import { fontFamily, type } from '@/theme/typography';
 import { PEOPLE_BY_ID, THREADS, type Message } from '@/data/people';
+import { MetalButton } from '@/components/ui/MetalButton';
 import { useChat } from '@/hooks/useChat';
 import { usePresence } from '@/hooks/usePresence';
 import { useRemoteProfile } from '@/hooks/useRemoteProfile';
+import { useRequests, useSentRequestStatus } from '@/hooks/useRequests';
 import { useHalo } from '@/state/store';
 import { demoKey, demoPersonId, walletKey } from '@/firebase/paths';
 
@@ -73,6 +75,80 @@ export default function ConversationScreen() {
   // Only a real account has a published card or a presence record to read.
   const { profile: remoteProfile } = useRemoteProfile(person ? null : counterpart);
   const { label: presenceLabel } = usePresence(person ? null : counterpart);
+
+  const requests = useRequests();
+  // Only meaningful for a real wallet; a roster persona has nobody to ask.
+  const sentStatus = useSentRequestStatus(person ? null : counterpart);
+  const [requesting, setRequesting] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
+
+  /**
+   * Whether this conversation may be written to, and what to say if not.
+   *
+   * A roster persona is always open: it has no wallet, the `demo_` prefix is
+   * exempted in the rules, and there is nobody to ask. A real wallet is gated
+   * on a connection, and the state in between - request sent, awaiting an
+   * answer - is a third thing that has to be nameable, or the button would
+   * re-send on every tap and the rules would refuse it as a duplicate.
+   */
+  const gate = React.useMemo(() => {
+    if (person || !counterpart) return { blocked: false } as const;
+    if (requests.isConnected(counterpart)) return { blocked: false } as const;
+
+    const incoming = requests.incoming.find((r) => r.from === walletKey(counterpart));
+
+    if (incoming?.status === 'pending') {
+      return {
+        blocked: true,
+        title: 'They asked to connect',
+        detail: 'Accept from your requests to start talking.',
+        action: 'Accept',
+      } as const;
+    }
+
+    if (sentStatus === 'pending') {
+      return {
+        blocked: true,
+        title: 'Request sent',
+        detail: 'You can message once they accept.',
+        action: null,
+      } as const;
+    }
+
+    if (sentStatus === 'declined') {
+      return {
+        blocked: true,
+        title: 'Request declined',
+        detail: 'They have not accepted this request.',
+        action: null,
+      } as const;
+    }
+
+    return {
+      blocked: true,
+      title: 'Not connected yet',
+      detail: requestError ?? 'Send a request before messaging.',
+      action: 'Send request',
+    } as const;
+  }, [person, counterpart, requests, sentStatus, requestError]);
+
+  const onRequest = useCallback(async () => {
+    if (!counterpart) return;
+    setRequesting(true);
+    setRequestError(null);
+    try {
+      const incoming = requests.incoming.find((r) => r.from === walletKey(counterpart));
+      // The same button accepts when they asked first, because from the user's
+      // side "connect with this person" is one intention regardless of who
+      // happened to ask.
+      if (incoming?.status === 'pending') await requests.accept(counterpart);
+      else await requests.send(counterpart);
+    } catch (error) {
+      setRequestError(error instanceof Error ? error.message : 'Could not send that request.');
+    } finally {
+      setRequesting(false);
+    }
+  }, [counterpart, requests]);
 
   const [draft, setDraft] = useState('');
   // The composer already pads by the safe-area inset, so the keyboard only
@@ -250,30 +326,61 @@ export default function ConversationScreen() {
           <Text style={[type.caption, styles.sendError]}>{chat.error}</Text>
         ) : null}
 
-        <View style={[styles.composerWrap, { paddingBottom: insets.bottom + space.md }]}>
-          <View style={styles.composer}>
-            <Icon name="paperclip" size={19} color={alpha.t38} />
-            <TextInput
-              value={draft}
-              onChangeText={setDraft}
-              placeholder="Message…"
-              placeholderTextColor={alpha.t38}
-              style={styles.input}
-              multiline
-              onSubmitEditing={send}
-              accessibilityLabel="Message"
-            />
-            <Icon name="smiley" size={19} color={alpha.t38} />
+        {gate.blocked ? (
+          /*
+           * No composer until there is a connection.
+           *
+           * This is not decoration over an optimistic write. The
+           * `participants` validator refuses a conversation with anyone the
+           * caller is not connected to, so a message typed here would fail on
+           * the database and surface as `permission_denied` - an error about
+           * rules, shown to someone who has done nothing wrong. Asking first is
+           * the honest control, and it is the same gate either way.
+           */
+          <View style={[styles.composerWrap, { paddingBottom: insets.bottom + space.md }]}>
+            <LiquidGlass radius={radii.lg} style={styles.gate} intensity={50}>
+              <Icon name="broadcast" size={19} color={alpha.t72} />
+              <View style={styles.gateText}>
+                <Text style={type.calloutStrong}>{gate.title}</Text>
+                <Text style={[type.caption, styles.bannerSub]}>{gate.detail}</Text>
+              </View>
+              {gate.action ? (
+                <MetalButton
+                  label={gate.action}
+                  variant="metal"
+                  size="sm"
+                  onPress={onRequest}
+                  disabled={requesting}
+                />
+              ) : null}
+            </LiquidGlass>
           </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Send"
-            onPress={send}
-            style={styles.send}
-          >
-            <Icon name="arrow-right" size={20} color={palette.void} />
-          </Pressable>
-        </View>
+        ) : (
+          <View style={[styles.composerWrap, { paddingBottom: insets.bottom + space.md }]}>
+            <View style={styles.composer}>
+              <Icon name="paperclip" size={19} color={alpha.t38} />
+              <TextInput
+                value={draft}
+                onChangeText={setDraft}
+                placeholder="Message…"
+                placeholderTextColor={alpha.t38}
+                style={styles.input}
+                multiline
+                onSubmitEditing={send}
+                accessibilityLabel="Message"
+              />
+              <Icon name="smiley" size={19} color={alpha.t38} />
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Send"
+              onPress={send}
+              style={styles.send}
+            >
+              <Icon name="arrow-right" size={20} color={palette.void} />
+            </Pressable>
+          </View>
+        )}
       </Animated.View>
     </View>
   );
@@ -343,6 +450,14 @@ const styles = StyleSheet.create({
   },
   bannerText: { flex: 1, marginHorizontal: space.md },
   bannerSub: { marginTop: 2 },
+
+  gate: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: space.lg,
+  },
+  gateText: { flex: 1, marginHorizontal: space.md },
 
   composerWrap: {
     flexDirection: 'row',

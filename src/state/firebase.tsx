@@ -15,6 +15,7 @@ import type { Coords } from '@/firebase/geo';
 import { claimWallet, syncUser } from '@/services/userService';
 import {
   clearLocation,
+  currentFix,
   publishLocation,
   watchLocation,
   type LocationError,
@@ -208,6 +209,27 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
    * version withdrew in both cases and logged a `permission_denied` warning on
    * launch every single time, for a write that had nothing to remove.
    */
+  /**
+   * A fix for the map, independent of sharing.
+   *
+   * Runs once, and only if location permission is already granted - it never
+   * prompts, because a cold start is not a moment the user asked for anything
+   * location-shaped. The sharing watcher below overwrites this with fresher
+   * fixes as soon as it starts; until then it is the difference between a map
+   * centred on the user and a map centred on Manhattan.
+   */
+  useEffect(() => {
+    let alive = true;
+    void currentFix().then((fix) => {
+      // The watcher may have produced a real fix while this was in flight, and
+      // that one is fresher. Only fill a gap; never overwrite.
+      if (alive && fix) setHere((existing) => existing ?? fix);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   useEffect(() => {
     // Not ours to touch - either the claim has not resolved yet, or it failed.
     // Nothing is published in this state, so there is nothing to withdraw.

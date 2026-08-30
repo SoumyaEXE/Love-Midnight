@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,6 +14,7 @@ import { alpha, layout, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
 import { PEOPLE_BY_ID, WINKS, type Wink } from '@/data/people';
 import { useHalo } from '@/state/store';
+import { useRequestCards, useRequests } from '@/hooks/useRequests';
 
 /*
  * No entering animation on these rows.
@@ -81,8 +82,16 @@ const FILTER_GROUPS: FilterGroup[] = [
 
 const DEFAULT_FILTERS: FilterSelection = { time: 'all', interaction: 'all', status: 'all' };
 
-/** Pending contact requests, as in the reference's "Incoming requests" sheet. */
-const REQUESTS: ContactRequest[] = [
+/**
+ * The roster's stand-in requests.
+ *
+ * Kept because the roster personas have no session and can never send a real
+ * one, so without these the sheet is empty until a second real account exists -
+ * which on a fresh install is every time. Real requests are appended to these,
+ * not substituted for them, and the two are distinguishable: a roster entry
+ * resolves through `PEOPLE_BY_ID`, a real one carries its own name and avatar.
+ */
+const DEMO_REQUESTS: ContactRequest[] = [
   { personId: 'tom', at: '10.03.2025' },
   { personId: 'anna', at: '03.03.2025' },
   { personId: 'michael', at: '12.03.2025' },
@@ -109,6 +118,31 @@ export default function WinkersScreen() {
   const [selected, setSelected] = useState<string | null>(null);
 
   const person = selected ? PEOPLE_BY_ID.get(selected) ?? null : null;
+
+  const requests = useRequests();
+  const { cards } = useRequestCards();
+
+  /** Real requests first - those are the ones that can actually be answered. */
+  const allRequests = useMemo<ContactRequest[]>(
+    () => [...cards, ...DEMO_REQUESTS],
+    [cards],
+  );
+
+  /**
+   * Answering a request.
+   *
+   * Only the real ones reach the database. A roster entry has no wallet and no
+   * row to update, so accepting one is a local dismissal - which is what the
+   * sheet already does on its own.
+   */
+  const onResolveRequest = useCallback(
+    (personId: string, accepted: boolean) => {
+      if (PEOPLE_BY_ID.has(personId)) return;
+      const action = accepted ? requests.accept(personId) : requests.decline(personId);
+      void action.catch(() => {});
+    },
+    [requests],
+  );
 
   const columnWidth = (width - space.xl * 2 - space.md) / 2;
 
@@ -148,10 +182,10 @@ export default function WinkersScreen() {
               <View>
                 <IconButton
                   name="person"
-                  accessibilityLabel={`Incoming requests, ${REQUESTS.length} waiting`}
+                  accessibilityLabel={`Incoming requests, ${allRequests.length} waiting`}
                   onPress={() => setRequestsOpen(true)}
                 />
-                {REQUESTS.length > 0 ? <View style={styles.filterDot} /> : null}
+                {allRequests.length > 0 ? <View style={styles.filterDot} /> : null}
               </View>
               <View>
                 <IconButton
@@ -259,7 +293,8 @@ export default function WinkersScreen() {
       <RequestsSheet
         visible={requestsOpen}
         onClose={() => setRequestsOpen(false)}
-        requests={REQUESTS}
+        requests={allRequests}
+        onResolve={onResolveRequest}
       />
 
       <FilterSheet

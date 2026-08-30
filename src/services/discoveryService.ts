@@ -112,6 +112,8 @@ export function watchNearby(input: {
       results.push({
         wallet,
         profile: user.profile,
+        latitude: location.latitude,
+        longitude: location.longitude,
         distance,
         place: location.place ?? null,
         online: seen?.online ?? false,
