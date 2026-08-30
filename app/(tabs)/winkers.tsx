@@ -223,14 +223,20 @@ export default function WinkersScreen() {
         {connections.length > 0 ? (
           <View style={styles.grid}>
             {connections.map((c) => (
-              <Pressable
+              <Card
                 key={c.wallet}
-                accessibilityRole="button"
-                accessibilityLabel={`Open a chat with ${c.name}`}
-                onPress={() => router.push(`/chat/${c.wallet}`)}
-                style={{ width: columnWidth }}
+                radius={radii.card}
+                style={[styles.tile, { width: columnWidth }]}
               >
-                <Card radius={radii.card} style={styles.tile}>
+                {/* The body, not the whole card. `MetalButton` is a button in
+                    its own right, and on web a control inside a control is
+                    invalid markup - the browser flattens it and the inner press
+                    stops arriving. Siblings keep both reachable. */}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open a chat with ${c.name}`}
+                  onPress={() => router.push(`/chat/${c.wallet}`)}
+                >
                   <View style={styles.tileHead}>
                     <Avatar email={c.avatar} size={42} online={c.online} />
                   </View>
@@ -241,17 +247,17 @@ export default function WinkersScreen() {
                   <Text style={[type.caption, styles.tileKind]} numberOfLines={1}>
                     {c.online ? 'Active now' : 'Connected'}
                   </Text>
+                </Pressable>
 
-                  <MetalButton
-                    label="Message"
-                    size="sm"
-                    variant={c.online ? 'violet' : 'metal'}
-                    fullWidth
-                    onPress={() => router.push(`/chat/${c.wallet}`)}
-                    style={styles.tileAction}
-                  />
-                </Card>
-              </Pressable>
+                <MetalButton
+                  label="Message"
+                  size="sm"
+                  variant={c.online ? 'violet' : 'metal'}
+                  fullWidth
+                  onPress={() => router.push(`/chat/${c.wallet}`)}
+                  style={styles.tileAction}
+                />
+              </Card>
             ))}
           </View>
         ) : null}
@@ -262,14 +268,21 @@ export default function WinkersScreen() {
             if (!person) return null;
 
             return (
-              <Pressable
+              <Card
                 key={wink.personId}
-                accessibilityRole="button"
-                accessibilityLabel={`Open ${person.name}'s profile`}
-                onPress={() => setSelected(person.id)}
-                style={{ width: columnWidth }}
+                radius={radii.card}
+                style={[styles.tile, { width: columnWidth }]}
+                active={wink.unread}
               >
-                <Card radius={radii.card} style={styles.tile} active={wink.unread}>
+                {/* Body only - see the connections grid above. Here the two
+                    actions genuinely differ: the body opens the profile, the
+                    button opens the chat. Nesting them meant the outer press
+                    fired on top of the inner one. */}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${person.name}'s profile`}
+                  onPress={() => setSelected(person.id)}
+                >
                   <View style={styles.tileHead}>
                     <Avatar
                       email={person.email}
@@ -288,17 +301,17 @@ export default function WinkersScreen() {
                   <Text style={[type.caption, styles.tileKind]} numberOfLines={1}>
                     {KIND_LABEL[wink.kind]}
                   </Text>
+                </Pressable>
 
-                  <MetalButton
-                    label={KIND_ACTION[wink.kind]}
-                    size="sm"
-                    variant={wink.unread ? 'violet' : 'metal'}
-                    fullWidth
-                    onPress={() => router.push(`/chat/${person.id}`)}
-                    style={styles.tileAction}
-                  />
-                </Card>
-              </Pressable>
+                <MetalButton
+                  label={KIND_ACTION[wink.kind]}
+                  size="sm"
+                  variant={wink.unread ? 'violet' : 'metal'}
+                  fullWidth
+                  onPress={() => router.push(`/chat/${person.id}`)}
+                  style={styles.tileAction}
+                />
+              </Card>
             );
           })}
         </View>

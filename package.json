@@ -1,7 +1,7 @@
 {
   "name": "expo-midnight",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "expo-router/entry",
   "dependencies": {
     "@expo-google-fonts/geist": "^0.4.2",
     "@expo/metro-config": "^57.0.12",

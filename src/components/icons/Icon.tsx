@@ -1,4 +1,5 @@
 import React from 'react';
+import { StyleSheet } from 'react-native';
 import Svg, { Circle, G, Line, Path, Rect, type SvgProps } from 'react-native-svg';
 import { text as textColor } from '@/theme/tokens';
 
@@ -70,11 +71,32 @@ export type IconProps = {
   strokeWidth?: number;
 } & Omit<SvgProps, 'width' | 'height' | 'color'>;
 
+/**
+ * Web paint-layer parity. Both values are React Native's own defaults, so this
+ * is inert on native and load-bearing in a browser.
+ *
+ * react-native-web emits every element with `position: relative; z-index: 0`,
+ * which puts all of them in the positioned-descendants paint layer.
+ * `react-native-svg` renders a bare DOM `<svg>` with neither, so an icon paints
+ * in the earlier in-flow layer - underneath *any* absolutely positioned
+ * sibling, whatever the DOM order says.
+ *
+ * Inside `LiquidGlass` those siblings are the blur and the tint wash, both of
+ * which fill the panel. An icon dropped straight into one was painted over and
+ * vanished, while the `Text` next to it - a react-native-web div, and so in the
+ * upper layer - stayed put. The overlays carry `pointerEvents="none"`, so the
+ * icon still hit-tested as the topmost element the whole time; only the
+ * compositor disagreed, which is what made it look like a rendering failure
+ * rather than a stacking one.
+ */
+const LAYER = { position: 'relative', zIndex: 0 } as const;
+
 export function Icon({
   name,
   size = 22,
   color = textColor.secondary,
   strokeWidth = 1.5,
+  style,
   ...rest
 }: IconProps) {
   const s = {
@@ -86,7 +108,13 @@ export function Icon({
   };
 
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" {...rest}>
+    <Svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      style={StyleSheet.flatten([LAYER, style])}
+      {...rest}
+    >
       <G {...s}>{glyph(name, color, strokeWidth)}</G>
     </Svg>
   );

@@ -62,8 +62,4 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   return (upstream ?? context.resolveRequest)(context, moduleName, platform);
 };
 
-// CanvasKit ships its WebAssembly as a `.wasm` file; Metro only serves it if
-// the extension is registered as an asset.
-config.resolver.assetExts.push('wasm');
-
 module.exports = config;

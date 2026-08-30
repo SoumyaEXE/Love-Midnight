@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -48,11 +48,15 @@ import { demoKey, demoPersonId, walletKey } from '@/firebase/paths';
  * as this one does - so the field it is meant to lift ends up underneath the
  * keys, which is exactly where a message composer must never be.
  */
+/** The composer stops growing here and starts scrolling. */
+const COMPOSER_MAX_HEIGHT = 110;
+
 export default function ConversationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
+  const input = useRef<TextInput>(null);
   const { wallet: walletState } = useHalo();
 
   // Accepts either form of roster route - the bare id the tab bar and roster
@@ -186,6 +190,31 @@ export default function ConversationScreen() {
   }));
 
   const messages: Message[] = [...seeded, ...stored];
+
+  /**
+   * The composer grows with the message.
+   *
+   * Native `multiline` inputs size themselves to their content; on web
+   * react-native-web renders a `<textarea>`, which does not - it keeps its
+   * initial height and scrolls the overflow. A second line was written into a
+   * box that could only show the first, and `maxHeight` never came into it
+   * because the height never moved off 54px.
+   *
+   * `auto` first is what makes it shrink again: `scrollHeight` on an element
+   * with an explicit height reports that height, never less, so measuring
+   * without releasing it would let the box grow and never come back down.
+   */
+  const autoGrow = useCallback(() => {
+    if (Platform.OS !== 'web') return;
+    const node = input.current as unknown as HTMLTextAreaElement | null;
+    if (!node?.style) return;
+    node.style.height = 'auto';
+    node.style.height = `${Math.min(node.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
+  }, []);
+
+  // After render, so the measurement sees the committed value - which also
+  // covers the reset when `send` clears the draft, not just typing.
+  useEffect(autoGrow, [draft, autoGrow]);
 
   const send = useCallback(() => {
     const body = draft.trim();
@@ -357,15 +386,29 @@ export default function ConversationScreen() {
           </View>
         ) : (
           <View style={[styles.composerWrap, { paddingBottom: insets.bottom + space.md }]}>
-            <View style={styles.composer}>
+            {/* `id` reaches the DOM as-is on web, which is what `web.css` hangs
+                the focus highlight on - the ring belongs on this pill, not on
+                the square textarea filling it. Inert on native. */}
+            <View style={styles.composer} id="composer">
               <Icon name="paperclip" size={19} color={alpha.t38} />
               <TextInput
+                ref={input}
                 value={draft}
                 onChangeText={setDraft}
                 placeholder="Message…"
                 placeholderTextColor={alpha.t38}
                 style={styles.input}
                 multiline
+                // A `<textarea>` defaults to two rows and aligns its text to the
+                // top, so a one-line message sat in the upper half of a box
+                // built for two - reading as badly centred rather than as the
+                // extra row it actually was. One row plus `autoGrow` means the
+                // height is only ever the height of the text.
+                //
+                // Web-only on purpose: `rows` reaches native as `numberOfLines`,
+                // where on Android it caps a multiline field's visible height
+                // instead of seeding it, which would stop the composer growing.
+                {...(Platform.OS === 'web' ? { rows: 1 } : null)}
                 onSubmitEditing={send}
                 accessibilityLabel="Message"
               />
@@ -479,7 +522,7 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    maxHeight: 110,
+    maxHeight: COMPOSER_MAX_HEIGHT,
     color: palette.white,
     fontFamily: fontFamily.light,
     fontSize: 15,

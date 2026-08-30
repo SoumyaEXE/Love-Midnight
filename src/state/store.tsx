@@ -137,6 +137,20 @@ type PhaseHandler = (phase: 'witnessing' | 'proving' | 'submitting') => void;
 
 const HaloContext = createContext<HaloState | null>(null);
 
+/**
+ * The address the simulated profile deploy reports.
+ *
+ * This used to be 52 random bech32 characters generated per publish, which
+ * meant the receipt showed a different contract every run and nothing on the
+ * screen could be checked against anything off it. A fixed address is the same
+ * fiction told consistently: the record it stands for is one contract, so
+ * screenshots, the receipt, and anyone reading over a shoulder all agree.
+ *
+ * Still a mock. It is not deployed, and the day a real deploy exists this is
+ * the line it replaces - the return value of that call, not a constant.
+ */
+const DEPLOYED_CONTRACT = 'mn_contract1qpzry9x8gf2tvdw0s3jn54khce6mua7l8x9j3k2p5s4m6t2v';
+
 export function HaloProvider({ children }: { children: React.ReactNode }) {
   const [wallet, setWallet] = useState<WalletState>({ status: 'disconnected' });
   const [connector, setConnector] = useState<Connector | null>(null);
@@ -455,13 +469,8 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
         { onPhase },
       );
 
-      // Simulate deploying the metadata contract      // Generate a realistic looking mock address using valid bech32 chars
-      const bech32Chars = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
-      let payload = '';
-      for (let i = 0; i < 52; i++) {
-        payload += bech32Chars[Math.floor(Math.random() * bech32Chars.length)];
-      }
-      setContractAddress(`mn_contract1${payload}`);
+      // The deploy is simulated; the address it reports is not re-rolled.
+      setContractAddress(DEPLOYED_CONTRACT);
       setProfileCommit(commit);
       return record(proof);
     },

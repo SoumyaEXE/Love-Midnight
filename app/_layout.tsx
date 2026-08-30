@@ -1,4 +1,7 @@
 import '@/polyfills';
+// Web-only, and dropped by Metro on native. It belongs in the root layout so it
+// loads before any screen's styles rather than racing them.
+import '@/theme/web.css';
 
 import React, { useCallback, useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';

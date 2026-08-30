@@ -260,6 +260,12 @@ const styles = StyleSheet.create({
     zIndex: 50,
     // The bar carries its own bloom, which lifts it off the content behind it
     // rather than letting it read as a hole cut in the screen.
+    //
+    // The radius is the bloom's, not the bar's - the visible pill is drawn by
+    // `tint` and `glass` inside. A box-shadow traces the element's own
+    // border-radius, so on web the bloom was cast as a rectangle around a
+    // rounded dock. Matching it here is what makes the glow follow the shape.
+    borderRadius: radii.pill,
     shadowColor: palette.bloom,
     shadowOpacity: 0.35,
     shadowRadius: 26,
