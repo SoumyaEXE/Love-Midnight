@@ -1,0 +1,49 @@
+/*
+ * Web-only corrections.
+ *
+ * Metro applies global stylesheets on web and drops them entirely on native, so
+ * everything here is scoped to the browser by construction. Keep it to things
+ * that only exist as problems in a DOM - anything that should hold on all three
+ * platforms belongs in `tokens.ts` and the component that owns it.
+ */
+
+/*
+ * The focus ring.
+ *
+ * react-native-web leaves the user-agent default in place, and Chrome draws
+ * `outline: auto` as a hard rectangle in its own colour - white on this
+ * background. It also ignores `border-radius`, and every control here is a
+ * pill, so the ring landed as a square box around a round button.
+ *
+ * `outline: none` on its own is the usual fix and the wrong one: it takes the
+ * ring away from keyboard users too, who have nothing else to tell them where
+ * they are. Suppressing `:focus` and restoring `:focus-visible` keeps the
+ * indicator exactly where it is needed and removes it where it is noise. The
+ * two selectors have equal specificity, so the later rule wins for the elements
+ * the browser decides are keyboard-focused.
+ */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid rgba(216, 180, 254, 0.9);
+  outline-offset: 2px;
+}
+
+/*
+ * The composer is the exception. It is a rounded container wrapping a square
+ * `<textarea>` that fills it, and browsers count a text field as
+ * keyboard-focused even when it was clicked - so the rule above would put a
+ * square ring inside a pill on every tap. The container takes the highlight
+ * instead, which is the shape the user actually sees.
+ */
+#composer :focus-visible {
+  outline: none;
+}
+
+#composer:focus-within {
+  border-color: rgba(216, 180, 254, 0.55);
+  background-color: rgba(255, 255, 255, 0.09);
+}
+

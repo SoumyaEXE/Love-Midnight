@@ -15,7 +15,8 @@ import { GlassPanel } from '@/components/glass/LiquidGlass';
 import { Icon, type IconName } from '@/components/icons/Icon';
 import { layout, motion, palette, radius as radii, space } from '@/theme/tokens';
 import { fontFamily } from '@/theme/typography';
-import { WINKS } from '@/data/people';
+
+import { useConversations } from '@/hooks/useConversations';
 
 /**
  * Floating glass tab bar, built on the headless `expo-router/ui` Tabs.
@@ -48,7 +49,14 @@ export default function TabsLayout() {
   const pathname = usePathname();
   const [barWidth, setBarWidth] = useState(0);
 
-  const unread = WINKS.filter((w) => w.unread).length;
+  // Was a count over the roster fixture, which is not a number about this
+  // user. Real unread lives in `useConversations().unread`; until the badge is
+  // wired to it, no badge is better than a fabricated one.
+  const unread = 0;
+  // Realtime, from the conversation index rather than from the messages
+  // themselves - the badge is exactly the sum the chat list already subscribes
+  // to, so it can never disagree with the rows underneath it.
+  const { unread: unreadMessages } = useConversations();
   const slotWidth = barWidth / TABS.length;
 
   /**
@@ -92,7 +100,22 @@ export default function TabsLayout() {
             triggers paint over it. The bar itself stays transparent: giving it
             a background would be what the BlurView samples, and the glass would
             show a flat colour instead of the content behind it. */}
-        <GlassPanel radius={radii.pill} style={styles.glass} specular={0.55} opacity={0.5} />
+        <GlassPanel
+          radius={radii.pill}
+          style={styles.glass}
+          specular={0.55}
+          /* Heavier than the GlassPanel default of 80, and heavier than any
+             other surface in the app. The dock sits over scrolling content at
+             the very bottom of the screen, where the backdrop is bloom and
+             high-contrast card edges - at a lighter blur those edges stay
+             legible through the bar and read as smear rather than as glass.
+             100 is the ceiling for expo-blur. */
+          intensity={100}
+          /* Lower opacity leans the material on the blur rather than on a
+             wash. Raising both would darken the bar into something closer to
+             a solid, which is the opposite of the ask. */
+          opacity={0.42}
+        />
 
         {/* Violet wash over the glass.
             The reference bar is not dark glass sitting on a violet page - it is
@@ -138,7 +161,13 @@ export default function TabsLayout() {
             <TabSlotButton
               icon={tab.icon}
               label={tab.label}
-              badge={tab.name === 'winkers' && unread > 0 ? unread : undefined}
+              badge={
+                tab.name === 'winkers' && unread > 0
+                  ? unread
+                  : tab.name === 'chat' && unreadMessages > 0
+                    ? unreadMessages
+                    : undefined
+              }
             />
           </TabTrigger>
         ))}
@@ -231,6 +260,12 @@ const styles = StyleSheet.create({
     zIndex: 50,
     // The bar carries its own bloom, which lifts it off the content behind it
     // rather than letting it read as a hole cut in the screen.
+    //
+    // The radius is the bloom's, not the bar's - the visible pill is drawn by
+    // `tint` and `glass` inside. A box-shadow traces the element's own
+    // border-radius, so on web the bloom was cast as a rectangle around a
+    // rounded dock. Matching it here is what makes the glow follow the shape.
+    borderRadius: radii.pill,
     shadowColor: palette.bloom,
     shadowOpacity: 0.35,
     shadowRadius: 26,

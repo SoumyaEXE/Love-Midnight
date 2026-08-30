@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, StyleSheet, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native';
 import { Canvas, Circle, RadialGradient, Rect, vec, Blur, Group } from '@shopify/react-native-skia';
 import { palette } from '@/theme/tokens';
 
@@ -24,7 +24,34 @@ export type GlowBackdropProps = {
   style?: StyleProp<ViewStyle>;
 };
 
-export function GlowBackdrop({
+/**
+ * Skia on web is CanvasKit, a WASM module nothing here loads, so these
+ * `Canvas` draws threw `CanvasKit is not defined` on first paint and took the
+ * screen down.
+ *
+ * A runtime branch rather than a `GlowBackdrop.web.tsx` sibling: this module is
+ * imported through the `@/` alias, and Expo's tsconfig-paths resolution does not
+ * carry platform extensions, so the web bundle loaded the native file regardless
+ * of the sibling. See `glass/GlassRim` for the same note.
+ */
+export function GlowBackdrop(props: GlowBackdropProps) {
+  if (Platform.OS === 'web') return <CssGlowBackdrop {...props} />;
+  return <SkiaGlowBackdrop {...props} />;
+}
+
+export type SpotGlowProps = {
+  size: number;
+  color?: string;
+  opacity?: number;
+  style?: StyleProp<ViewStyle>;
+};
+
+export function SpotGlow(props: SpotGlowProps) {
+  if (Platform.OS === 'web') return <CssSpotGlow {...props} />;
+  return <SkiaSpotGlow {...props} />;
+}
+
+function SkiaGlowBackdrop({
   intensity = 1,
   origin = 1.02,
   crown = true,
@@ -89,7 +116,7 @@ export function GlowBackdrop({
  * A localised bloom placed behind a specific element - the radar core, an
  * avatar, a selected tab. Absolutely positioned by the caller.
  */
-export function SpotGlow({
+function SkiaSpotGlow({
   size,
   color = palette.bloom,
   opacity = 0.6,
@@ -127,4 +154,83 @@ function hexToRgb(hex: string): string {
   const full = clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean;
   const n = parseInt(full, 16);
   return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+}
+
+/**
+ * The bloom in CSS.
+ *
+ * The native comment explains why Skia was chosen over stacked gradients:
+ * banding is very visible across a 700 px falloff on a near-black ground, and
+ * Skia dithers where a layered gradient does not. That reasoning is about React
+ * Native's gradient primitives, not about browsers - a real `radial-gradient`
+ * is dithered by the compositor. The geometry and stops are identical, so both
+ * platforms are lit the same way rather than merely similarly.
+ */
+function CssGlowBackdrop({
+  intensity = 1,
+  origin = 1.02,
+  crown = true,
+  style,
+}: GlowBackdropProps) {
+  const { width } = useWindowDimensions();
+
+  const primaryRadius = width * 1.15;
+  const crownRadius = width * 0.85;
+  const i = Math.max(0, Math.min(intensity, 1));
+
+  // CSS layers the first entry on top - the reverse of Skia's draw order - so
+  // the primary bloom leads and the `void` ground closes the list.
+  const layers = [
+    `radial-gradient(${primaryRadius}px ${primaryRadius}px at 50% ${(origin * 100).toFixed(2)}%, ` +
+      `rgba(197,60,255,${(0.95 * i).toFixed(3)}) 0%, ` +
+      `rgba(160,32,232,${(0.55 * i).toFixed(3)}) 28%, ` +
+      `rgba(96,20,160,${(0.16 * i).toFixed(3)}) 58%, ` +
+      `rgba(7,6,10,0) 100%)`,
+    ...(crown
+      ? [
+          `radial-gradient(${crownRadius}px ${crownRadius}px at 50% -12%, ` +
+            `rgba(176,38,255,${(0.2 * i).toFixed(3)}) 0%, ` +
+            `rgba(124,34,206,${(0.07 * i).toFixed(3)}) 45%, ` +
+            `rgba(7,6,10,0) 100%)`,
+        ]
+      : []),
+    palette.void,
+  ];
+
+  return (
+    <View style={[StyleSheet.absoluteFill, style]} pointerEvents="none">
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: layers.join(', '),
+          // Softens the one real discontinuity: the tail meeting the ground.
+          filter: 'blur(18px)',
+          // Blur samples outside the element and would otherwise reveal a
+          // transparent edge where there is nothing to sample.
+          transform: 'scale(1.08)',
+        }}
+      />
+    </View>
+  );
+}
+
+function CssSpotGlow({ size, color = palette.bloom, opacity = 0.6, style }: SpotGlowProps) {
+  const rgb = hexToRgb(color);
+  return (
+    <View style={[{ width: size, height: size }, style]} pointerEvents="none">
+      <div
+        style={{
+          width: size,
+          height: size,
+          borderRadius: '50%',
+          background:
+            `radial-gradient(circle at 50% 50%, ` +
+            `rgba(${rgb},${opacity.toFixed(3)}) 0%, ` +
+            `rgba(${rgb},${(opacity * 0.35).toFixed(3)}) 40%, ` +
+            `rgba(${rgb},0) 100%)`,
+        }}
+      />
+    </View>
+  );
 }

@@ -21,3 +21,7 @@ export async function hasOnboarded(): Promise<boolean> {
 export async function markOnboarded(): Promise<void> {
   await AsyncStorage.setItem(KEY, 'true');
 }
+
+export async function clearOnboarded(): Promise<void> {
+  await AsyncStorage.removeItem(KEY);
+}

@@ -4,6 +4,8 @@
   "main": "expo-router/entry",
   "dependencies": {
     "@expo-google-fonts/geist": "^0.4.2",
+    "@expo/metro-config": "^57.0.12",
+    "@expo/metro-runtime": "^57.0.14",
     "@midnight-ntwrk/dapp-connector-api": "^4.0.1",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@shopify/react-native-skia": "2.6.2",
@@ -25,7 +27,11 @@
     "expo-splash-screen": "~57.0.8",
     "expo-status-bar": "~57.0.1",
     "expo-web-browser": "~57.0.2",
+    "firebase": "^12.18.0",
+    "firebase-admin": "^14.3.0",
+    "geofire-common": "^6.0.0",
     "react": "19.2.3",
+    "react-dom": "19.2.3",
     "react-native": "0.86.3",
     "react-native-gesture-handler": "~2.32.0",
     "react-native-get-random-values": "~1.11.0",
@@ -33,12 +39,14 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-svg": "15.15.4",
+    "react-native-web": "^0.21.2",
     "react-native-webview": "13.16.1",
     "react-native-worklets": "0.10.1"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
     "@types/react": "~19.2.2",
+    "@vercel/node": "^10.0.0",
     "babel-preset-expo": "^57.0.9",
     "esbuild": "^0.28.2",
     "typescript": "~6.0.3"
@@ -50,8 +58,9 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "check:matching": "node scripts/check-matching.mjs",
-    "check": "tsc --noEmit && node scripts/check-tab-structure.mjs && node scripts/check-matching.mjs",
-    "check:tabs": "node scripts/check-tab-structure.mjs"
+    "check": "tsc --noEmit && node scripts/check-tab-structure.mjs && node scripts/check-matching.mjs && node scripts/check-firebase-config.mjs",
+    "check:tabs": "node scripts/check-tab-structure.mjs",
+    "check:firebase": "node scripts/check-firebase-config.mjs"
   },
   "private": true
 }

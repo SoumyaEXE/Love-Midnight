@@ -1,4 +1,7 @@
 import '@/polyfills';
+// Web-only, and dropped by Metro on native. It belongs in the root layout so it
+// loads before any screen's styles rather than racing them.
+import '@/theme/web.css';
 
 import React, { useCallback, useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
@@ -11,6 +14,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { fontAssets } from '@/theme/typography';
 import { palette } from '@/theme/tokens';
 import { HaloProvider } from '@/state/store';
+import { FirebaseProvider } from '@/state/firebase';
 import { primeGravatars } from '@/data/gravatar';
 import { ALL_EMAILS } from '@/data/people';
 
@@ -40,32 +44,37 @@ export default function RootLayout() {
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
         <HaloProvider>
-          <View style={styles.root} onLayout={onReady}>
-            <StatusBar style="light" />
-            <Stack
-              screenOptions={{
-                headerShown: false,
-                contentStyle: { backgroundColor: palette.void },
-                animation: 'fade_from_bottom',
-                animationDuration: 220,
-              }}
-            >
-              <Stack.Screen name="index" />
-              <Stack.Screen name="onboarding" />
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen
-                name="person/[id]"
-                options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
-              />
-              <Stack.Screen name="chat/[id]" options={{ animation: 'slide_from_right' }} />
-              <Stack.Screen
-                name="proof/[id]"
-                options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
-              />
-              <Stack.Screen name="privacy" options={{ animation: 'slide_from_right' }} />
-              <Stack.Screen name="profile-edit" options={{ animation: 'slide_from_right' }} />
-            </Stack>
-          </View>
+          {/* Inside HaloProvider, deliberately: the realtime session reads the
+              wallet, the profile and the verification flag from it rather than
+              keeping a second copy of any of them. */}
+          <FirebaseProvider>
+            <View style={styles.root} onLayout={onReady}>
+              <StatusBar style="light" />
+              <Stack
+                screenOptions={{
+                  headerShown: false,
+                  contentStyle: { backgroundColor: palette.void },
+                  animation: 'fade_from_bottom',
+                  animationDuration: 220,
+                }}
+              >
+                <Stack.Screen name="index" />
+                <Stack.Screen name="onboarding" />
+                <Stack.Screen name="(tabs)" />
+                <Stack.Screen
+                  name="person/[id]"
+                  options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+                />
+                <Stack.Screen name="chat/[id]" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen
+                  name="proof/[id]"
+                  options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+                />
+                <Stack.Screen name="privacy" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="profile-edit" options={{ animation: 'slide_from_right' }} />
+              </Stack>
+            </View>
+          </FirebaseProvider>
         </HaloProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

@@ -42,11 +42,25 @@ export type GravatarOptions = {
 const BASE = 'https://gravatar.com/avatar';
 const cache = new Map<string, Promise<string>>();
 
-function normalise(email: string): string {
-  return email.trim().toLowerCase();
+/**
+ * The cache key for an avatar.
+ *
+ * Tolerates a missing value on purpose. Every caller here passes a key that is
+ * *derived* - a wallet address, a gravatar field from a profile that may not
+ * have loaded yet - rather than typed by a user, so `undefined` is a normal
+ * intermediate state and not a programming error. It used to throw
+ * `Cannot read property 'trim' of undefined` from inside a render and take the
+ * whole chat screen down with it, which is a poor trade for a placeholder
+ * portrait.
+ *
+ * The empty string hashes to a stable value, so a row with no key yet gets a
+ * consistent robohash rather than flickering between plates as it resolves.
+ */
+function normalise(email: string | null | undefined): string {
+  return (email ?? '').trim().toLowerCase();
 }
 
-export function hashEmail(email: string): Promise<string> {
+export function hashEmail(email: string | null | undefined): Promise<string> {
   const key = normalise(email);
   let hit = cache.get(key);
   if (!hit) {
@@ -56,7 +70,10 @@ export function hashEmail(email: string): Promise<string> {
   return hit;
 }
 
-export async function gravatarUrl(email: string, options: GravatarOptions = {}): Promise<string> {
+export async function gravatarUrl(
+  email: string | null | undefined,
+  options: GravatarOptions = {},
+): Promise<string> {
   const { size = 256, fallback = 'robohash', forceDefault = false, rating = 'pg' } = options;
   const hash = await hashEmail(email);
 

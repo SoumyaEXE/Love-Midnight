@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,8 +12,20 @@ import { ProfileSheet } from '@/components/sheets/ProfileSheet';
 import { RequestsSheet, type ContactRequest } from '@/components/sheets/RequestsSheet';
 import { alpha, layout, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
-import { PEOPLE_BY_ID, WINKS, type Wink } from '@/data/people';
+import { PEOPLE_BY_ID, type Wink } from '@/data/people';
+
+/**
+ * The winks grid, emptied.
+ *
+ * `WINKS` was a fixture over the roster - people who cannot wink, because they
+ * have no session to wink from. Nothing writes winks to the database yet, so
+ * the honest list is an empty one, and the screen's own empty state already
+ * says so. The binding is kept rather than the usage deleted so that wiring a
+ * real `winks/{wallet}` node here is a one-line change.
+ */
+const DEMO_WINKS: Wink[] = [];
 import { useHalo } from '@/state/store';
+import { useConnectionCards, useRequestCards, useRequests } from '@/hooks/useRequests';
 
 /*
  * No entering animation on these rows.
@@ -81,14 +93,7 @@ const FILTER_GROUPS: FilterGroup[] = [
 
 const DEFAULT_FILTERS: FilterSelection = { time: 'all', interaction: 'all', status: 'all' };
 
-/** Pending contact requests, as in the reference's "Incoming requests" sheet. */
-const REQUESTS: ContactRequest[] = [
-  { personId: 'tom', at: '10.03.2025' },
-  { personId: 'anna', at: '03.03.2025' },
-  { personId: 'michael', at: '12.03.2025' },
-  { personId: 'emma', at: '10.03.2025' },
-  { personId: 'nataly', at: '03.03.2025' },
-];
+
 
 /** Buckets a relative timestamp onto the sheet's time axis. */
 function timeBucket(at: string): 'today' | 'yesterday' | 'older' {
@@ -110,13 +115,39 @@ export default function WinkersScreen() {
 
   const person = selected ? PEOPLE_BY_ID.get(selected) ?? null : null;
 
+  const requests = useRequests();
+  const { cards } = useRequestCards();
+  const { cards: connections } = useConnectionCards();
+
+  /**
+   * Only real requests. The roster's stand-ins are gone: a persona has no
+   * session, so accepting one wrote nothing and connected nobody.
+   */
+  const allRequests = useMemo<ContactRequest[]>(() => cards, [cards]);
+
+  /**
+   * Answering a request.
+   *
+   * Only the real ones reach the database. A roster entry has no wallet and no
+   * row to update, so accepting one is a local dismissal - which is what the
+   * sheet already does on its own.
+   */
+  const onResolveRequest = useCallback(
+    (personId: string, accepted: boolean) => {
+      if (PEOPLE_BY_ID.has(personId)) return;
+      const action = accepted ? requests.accept(personId) : requests.decline(personId);
+      void action.catch(() => {});
+    },
+    [requests],
+  );
+
   const columnWidth = (width - space.xl * 2 - space.md) / 2;
 
   const activeCount = Object.entries(filters).filter(([, v]) => v !== 'all').length;
 
   const visible = useMemo(
     () =>
-      WINKS.filter((wink) => {
+      DEMO_WINKS.filter((wink) => {
         if (filters.interaction !== 'all' && wink.kind !== filters.interaction) return false;
         if (filters.time !== 'all' && timeBucket(wink.at) !== filters.time) return false;
 
@@ -148,10 +179,10 @@ export default function WinkersScreen() {
               <View>
                 <IconButton
                   name="person"
-                  accessibilityLabel={`Incoming requests, ${REQUESTS.length} waiting`}
+                  accessibilityLabel={`Incoming requests, ${allRequests.length} waiting`}
                   onPress={() => setRequestsOpen(true)}
                 />
-                {REQUESTS.length > 0 ? <View style={styles.filterDot} /> : null}
+                {allRequests.length > 0 ? <View style={styles.filterDot} /> : null}
               </View>
               <View>
                 <IconButton
@@ -170,7 +201,7 @@ export default function WinkersScreen() {
         {activeCount > 0 ? (
           <View style={styles.summary}>
             <Badge
-              label={`${visible.length} of ${WINKS.length} shown`}
+              label={`${visible.length} of ${DEMO_WINKS.length} shown`}
               tone="violet"
               icon="sliders"
             />
@@ -183,20 +214,75 @@ export default function WinkersScreen() {
           </View>
         ) : null}
 
+        {/* Accepted connections.
+            Before this they went nowhere: the requests sheet filters on
+            `pending`, so accepting removed the only row that showed them, and
+            the chat list is built from `userConversations`, which is not
+            written until somebody sends a message. Two people could agree to
+            talk and find no trace of each other in the app. */}
+        {connections.length > 0 ? (
+          <View style={styles.grid}>
+            {connections.map((c) => (
+              <Card
+                key={c.wallet}
+                radius={radii.card}
+                style={[styles.tile, { width: columnWidth }]}
+              >
+                {/* The body, not the whole card. `MetalButton` is a button in
+                    its own right, and on web a control inside a control is
+                    invalid markup - the browser flattens it and the inner press
+                    stops arriving. Siblings keep both reachable. */}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open a chat with ${c.name}`}
+                  onPress={() => router.push(`/chat/${c.wallet}`)}
+                >
+                  <View style={styles.tileHead}>
+                    <Avatar email={c.avatar} size={42} online={c.online} />
+                  </View>
+
+                  <Text style={[type.body, styles.tileName]} numberOfLines={1}>
+                    {c.name}
+                  </Text>
+                  <Text style={[type.caption, styles.tileKind]} numberOfLines={1}>
+                    {c.online ? 'Active now' : 'Connected'}
+                  </Text>
+                </Pressable>
+
+                <MetalButton
+                  label="Message"
+                  size="sm"
+                  variant={c.online ? 'violet' : 'metal'}
+                  fullWidth
+                  onPress={() => router.push(`/chat/${c.wallet}`)}
+                  style={styles.tileAction}
+                />
+              </Card>
+            ))}
+          </View>
+        ) : null}
+
         <View style={styles.grid}>
           {visible.map((wink) => {
             const person = PEOPLE_BY_ID.get(wink.personId);
             if (!person) return null;
 
             return (
-              <Pressable
+              <Card
                 key={wink.personId}
-                accessibilityRole="button"
-                accessibilityLabel={`Open ${person.name}'s profile`}
-                onPress={() => setSelected(person.id)}
-                style={{ width: columnWidth }}
+                radius={radii.card}
+                style={[styles.tile, { width: columnWidth }]}
+                active={wink.unread}
               >
-                <Card radius={radii.card} style={styles.tile} active={wink.unread}>
+                {/* Body only - see the connections grid above. Here the two
+                    actions genuinely differ: the body opens the profile, the
+                    button opens the chat. Nesting them meant the outer press
+                    fired on top of the inner one. */}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${person.name}'s profile`}
+                  onPress={() => setSelected(person.id)}
+                >
                   <View style={styles.tileHead}>
                     <Avatar
                       email={person.email}
@@ -215,33 +301,40 @@ export default function WinkersScreen() {
                   <Text style={[type.caption, styles.tileKind]} numberOfLines={1}>
                     {KIND_LABEL[wink.kind]}
                   </Text>
+                </Pressable>
 
-                  <MetalButton
-                    label={KIND_ACTION[wink.kind]}
-                    size="sm"
-                    variant={wink.unread ? 'violet' : 'metal'}
-                    fullWidth
-                    onPress={() => router.push(`/chat/${person.id}`)}
-                    style={styles.tileAction}
-                  />
-                </Card>
-              </Pressable>
+                <MetalButton
+                  label={KIND_ACTION[wink.kind]}
+                  size="sm"
+                  variant={wink.unread ? 'violet' : 'metal'}
+                  fullWidth
+                  onPress={() => router.push(`/chat/${person.id}`)}
+                  style={styles.tileAction}
+                />
+              </Card>
             );
           })}
         </View>
 
-        {visible.length === 0 ? (
+        {visible.length === 0 && connections.length === 0 ? (
           <View style={styles.empty}>
             <Text style={[type.callout, styles.emptyLabel]}>
-              Nothing matches those filters.
+              {activeCount > 0
+                ? 'Nothing matches those filters.'
+                : 'Nobody has connected with you yet. Send a request from the map.'}
             </Text>
-            <MetalButton
-              label="Clear filters"
-              variant="metal"
-              size="md"
-              onPress={() => setFilters(DEFAULT_FILTERS)}
-              style={styles.emptyAction}
-            />
+            {/* Only when a filter is actually hiding something. Otherwise the
+                list is empty because nothing exists yet, and offering to clear
+                filters points at the wrong cause. */}
+            {activeCount > 0 ? (
+              <MetalButton
+                label="Clear filters"
+                variant="metal"
+                size="md"
+                onPress={() => setFilters(DEFAULT_FILTERS)}
+                style={styles.emptyAction}
+              />
+            ) : null}
           </View>
         ) : null}
       </ScrollView>
@@ -259,7 +352,8 @@ export default function WinkersScreen() {
       <RequestsSheet
         visible={requestsOpen}
         onClose={() => setRequestsOpen(false)}
-        requests={REQUESTS}
+        requests={allRequests}
+        onResolve={onResolveRequest}
       />
 
       <FilterSheet

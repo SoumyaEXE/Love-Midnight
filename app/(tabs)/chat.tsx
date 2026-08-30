@@ -10,23 +10,84 @@ import { Icon } from '@/components/icons/Icon';
 import { alpha, layout, palette, radius as radii, space } from '@/theme/tokens';
 import { fontFamily, type } from '@/theme/typography';
 import { CONVERSATIONS, PEOPLE_BY_ID } from '@/data/people';
+import { useConversations } from '@/hooks/useConversations';
+import { useConnectionCards } from '@/hooks/useRequests';
+import { demoKey, demoPersonId } from '@/firebase/paths';
 
-/** Conversation list. Unread rows carry the violet wash from the comps. */
+/**
+ * Conversation list. Unread rows carry the violet wash from the comps.
+ *
+ * Two sources, kept apart on purpose. The live section is backed by the
+ * `userConversations` index - one subscription, updating in place as messages
+ * land - and the section below it is the demo roster the rest of the app
+ * already ships. Merging them into one list would mean sorting a real
+ * timestamp against the string "Yesterday".
+ */
 export default function ChatScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
+  const live = useConversations();
 
-  const results = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return CONVERSATIONS;
-    return CONVERSATIONS.filter((c) => {
-      const person = PEOPLE_BY_ID.get(c.personId);
-      return (
-        person?.name.toLowerCase().includes(needle) || c.preview.toLowerCase().includes(needle)
-      );
-    });
-  }, [query]);
+  const needle = query.trim().toLowerCase();
+
+  /**
+   * Roster rows that have not become real conversations yet.
+   *
+   * Once a message has actually been sent to a persona, the conversation is in
+   * the database and appears in the live section above with a real last line
+   * and a real timestamp. Leaving the scripted row in place as well would show
+   * the same person twice, disagreeing with itself about what was last said.
+   */
+  const started = useMemo(
+    () => new Set(live.rows.map((row) => row.otherUserId)),
+    [live.rows],
+  );
+
+  /*
+   * The demo roster no longer appears in this list.
+   *
+   * `CONVERSATIONS` is a static fixture: five personas with no session, no
+   * wallet and no way to reply. Listing them beside real conversations made the
+   * chat list mostly fiction, and every one of them opened a thread that could
+   * never receive a message. Real conversations are `live.rows`, which is what
+   * the screen shows now - and an empty list is the honest state for an account
+   * that has not talked to anyone yet.
+   *
+   * `started` is retained because `chat/[id].tsx` still resolves `demo_` keys:
+   * a thread already opened against a persona keeps working from its stored
+   * rows, it simply is not advertised here.
+   */
+  const results: typeof CONVERSATIONS = [];
+
+  const liveRowIds = useMemo(() => live.rows.map((r) => r.otherUserId), [live.rows]);
+  const { cards: connections } = useConnectionCards();
+
+  /**
+   * Connections with nothing said yet.
+   *
+   * `userConversations` rows are written by `sendMessage` and by nothing else,
+   * so a pair who have just accepted each other have no row and appeared in
+   * this list nowhere - two people agree to talk and then cannot find each
+   * other. These are the same people, listed before the first message exists,
+   * and they drop out of this section the moment one is sent.
+   */
+  const fresh = useMemo(() => {
+    const talking = new Set(liveRowIds);
+    const needle2 = needle;
+    return connections
+      .filter((c) => !talking.has(c.wallet))
+      .filter((c) => !needle2 || c.name.toLowerCase().includes(needle2));
+  }, [connections, liveRowIds, needle]);
+
+  const liveRows = useMemo(() => {
+    if (!needle) return live.rows;
+    return live.rows.filter(
+      (row) =>
+        row.name.toLowerCase().includes(needle) ||
+        (row.lastMessage ?? '').toLowerCase().includes(needle),
+    );
+  }, [live.rows, needle]);
 
   return (
     <View style={styles.root}>
@@ -57,6 +118,89 @@ export default function ChatScreen() {
           </View>
           <IconButton name="sliders" accessibilityLabel="Filter chats" style={styles.searchFilter} />
         </View>
+
+        {fresh.length > 0 ? (
+          <>
+            <Text style={[type.eyebrow, styles.sectionLabel]}>Connected</Text>
+            <View style={styles.list}>
+              {fresh.map((c) => (
+                <PressableCard
+                  key={c.wallet}
+                  radius={radii.lg}
+                  style={styles.row}
+                  accessibilityLabel={`Start a chat with ${c.name}`}
+                  onPress={() => router.push(`/chat/${c.wallet}`)}
+                >
+                  <Avatar email={c.avatar} size={44} online={c.online} />
+                  <View style={styles.rowText}>
+                    <Text style={type.body} numberOfLines={1}>
+                      {c.name}
+                    </Text>
+                    <Text style={type.callout} numberOfLines={1}>
+                      {c.online ? 'Active now' : 'Say hello'}
+                    </Text>
+                  </View>
+                  <Icon name="chevron-right" size={18} color={alpha.t28} />
+                </PressableCard>
+              ))}
+            </View>
+          </>
+        ) : null}
+
+        {liveRows.length > 0 ? (
+          <>
+            <Text style={[type.eyebrow, styles.sectionLabel]}>Messages</Text>
+            <View style={styles.list}>
+              {liveRows.map((row) => (
+                <PressableCard
+                  key={row.id}
+                  radius={radii.lg}
+                  active={row.unreadCount > 0}
+                  style={styles.row}
+                  accessibilityLabel={
+                    row.unreadCount > 0
+                      ? `Chat with ${row.name}, ${row.unreadCount} unread`
+                      : `Chat with ${row.name}`
+                  }
+                  // A roster conversation routes by its roster id, so the
+                  // screen can resolve the persona and its scripted opening.
+                  onPress={() =>
+                    router.push(`/chat/${demoPersonId(row.otherUserId) ?? row.otherUserId}`)
+                  }
+                >
+                  <Avatar
+                    email={row.avatar ?? row.otherUserId}
+                    size={44}
+                    online={row.online}
+                  />
+                  <View style={styles.rowText}>
+                    <Text style={type.body} numberOfLines={1}>
+                      {row.name}
+                    </Text>
+                    <Text
+                      style={[type.callout, row.unreadCount > 0 && styles.previewUnread]}
+                      numberOfLines={1}
+                    >
+                      {row.lastMessage || 'No messages yet'}
+                    </Text>
+                  </View>
+                  <View style={styles.rowMeta}>
+                    <Text style={[type.micro, styles.rowTime]}>
+                      {formatWhen(row.lastMessageTimestamp)}
+                    </Text>
+                    {row.unreadCount > 0 ? (
+                      <View style={styles.unread}>
+                        <Text style={styles.unreadLabel} numberOfLines={1}>
+                          {row.unreadCount > 9 ? '9+' : row.unreadCount}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </PressableCard>
+              ))}
+            </View>
+          </>
+        ) : null}
 
         <View style={styles.list}>
           {results.map((conversation) => {
@@ -97,6 +241,22 @@ export default function ChatScreen() {
   );
 }
 
+/** `09:41` today, `Tue` this week, `12 Mar` beyond it. */
+function formatWhen(timestamp: number): string {
+  if (!timestamp) return '';
+
+  const then = new Date(timestamp);
+  const elapsed = Date.now() - timestamp;
+
+  if (elapsed < 24 * 3600_000) {
+    return then.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  if (elapsed < 7 * 24 * 3600_000) {
+    return then.toLocaleDateString([], { weekday: 'short' });
+  }
+  return then.toLocaleDateString([], { day: 'numeric', month: 'short' });
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: palette.void },
 
@@ -133,4 +293,22 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, marginLeft: space.md, marginRight: space.sm },
   previewUnread: { color: alpha.t90 },
   rowTime: { color: alpha.t38 },
+
+  sectionLabel: { marginTop: space['2xl'], marginHorizontal: space.xl },
+  rowMeta: { alignItems: 'flex-end', gap: 6 },
+  unread: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.violet,
+  },
+  unreadLabel: {
+    fontFamily: fontFamily.semiBold,
+    fontSize: 10,
+    lineHeight: 14,
+    color: palette.white,
+  },
 });

@@ -1,5 +1,6 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Platform,
   Pressable,
   ScrollView,
@@ -21,9 +22,22 @@ import { Icon } from '@/components/icons/Icon';
 import { alpha, palette, radius as radii, shadow, space } from '@/theme/tokens';
 import { fontFamily, type } from '@/theme/typography';
 import { PEOPLE_BY_ID, THREADS, type Message } from '@/data/people';
+import { MetalButton } from '@/components/ui/MetalButton';
+import { useChat } from '@/hooks/useChat';
+import { usePresence } from '@/hooks/usePresence';
+import { useRemoteProfile } from '@/hooks/useRemoteProfile';
+import { useRequests, useSentRequestStatus } from '@/hooks/useRequests';
+import { useHalo } from '@/state/store';
+import { demoKey, demoPersonId, walletKey } from '@/firebase/paths';
 
 /**
  * Conversation.
+ *
+ * The route parameter is either a roster id or a wallet address, and which one
+ * it is decides where the messages come from: the demo thread for the former,
+ * the realtime conversation node for the latter. Everything below that fork -
+ * bubbles, composer, keyboard handling - is shared, because the two differ in
+ * their source and in nothing a reader of the screen should care about.
  *
  * The call-permission banner from the comps is parked - see the commented
  * block below the thread for what it was and why it is not on screen.
@@ -34,36 +48,192 @@ import { PEOPLE_BY_ID, THREADS, type Message } from '@/data/people';
  * as this one does - so the field it is meant to lift ends up underneath the
  * keys, which is exactly where a message composer must never be.
  */
+/** The composer stops growing here and starts scrolling. */
+const COMPOSER_MAX_HEIGHT = 110;
+
 export default function ConversationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
+  const input = useRef<TextInput>(null);
+  const { wallet: walletState } = useHalo();
 
-  const person = id ? PEOPLE_BY_ID.get(id) : null;
-  const [messages, setMessages] = useState<Message[]>(() => (id ? THREADS[id] ?? [] : []));
+  // Accepts either form of roster route - the bare id the tab bar and roster
+  // screens use, and the `demo_` key a stored conversation carries - so a link
+  // from either place lands on the same screen with the persona resolved.
+  const person = id ? (PEOPLE_BY_ID.get(id) ?? PEOPLE_BY_ID.get(demoPersonId(id) ?? '')) : null;
+
+  /**
+   * The counterpart's database key, whoever they are.
+   *
+   * Both kinds of conversation store their messages the same way. A roster
+   * persona has no wallet, so it gets a reserved `demo_` key - what matters is
+   * that a message the user typed is written to the database and is still there
+   * tomorrow, and that there is one storage path rather than one that persists
+   * and one that quietly does not.
+   */
+  const counterpart = person ? demoKey(person.id) : (id ?? null);
+
+  const chat = useChat(counterpart);
+  // Only a real account has a published card or a presence record to read.
+  const { profile: remoteProfile } = useRemoteProfile(person ? null : counterpart);
+  const { label: presenceLabel } = usePresence(person ? null : counterpart);
+
+  const requests = useRequests();
+  // Only meaningful for a real wallet; a roster persona has nobody to ask.
+  const sentStatus = useSentRequestStatus(person ? null : counterpart);
+  const [requesting, setRequesting] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
+
+  /**
+   * Whether this conversation may be written to, and what to say if not.
+   *
+   * A roster persona is always open: it has no wallet, the `demo_` prefix is
+   * exempted in the rules, and there is nobody to ask. A real wallet is gated
+   * on a connection, and the state in between - request sent, awaiting an
+   * answer - is a third thing that has to be nameable, or the button would
+   * re-send on every tap and the rules would refuse it as a duplicate.
+   */
+  const gate = React.useMemo(() => {
+    if (person || !counterpart) return { blocked: false } as const;
+    if (requests.isConnected(counterpart)) return { blocked: false } as const;
+
+    const incoming = requests.incoming.find((r) => r.from === walletKey(counterpart));
+
+    if (incoming?.status === 'pending') {
+      return {
+        blocked: true,
+        title: 'They asked to connect',
+        detail: 'Accept from your requests to start talking.',
+        action: 'Accept',
+      } as const;
+    }
+
+    if (sentStatus === 'pending') {
+      return {
+        blocked: true,
+        title: 'Request sent',
+        detail: 'You can message once they accept.',
+        action: null,
+      } as const;
+    }
+
+    if (sentStatus === 'declined') {
+      return {
+        blocked: true,
+        title: 'Request declined',
+        detail: 'They have not accepted this request.',
+        action: null,
+      } as const;
+    }
+
+    return {
+      blocked: true,
+      title: 'Not connected yet',
+      detail: requestError ?? 'Send a request before messaging.',
+      action: 'Send request',
+    } as const;
+  }, [person, counterpart, requests, sentStatus, requestError]);
+
+  const onRequest = useCallback(async () => {
+    if (!counterpart) return;
+    setRequesting(true);
+    setRequestError(null);
+    try {
+      const incoming = requests.incoming.find((r) => r.from === walletKey(counterpart));
+      // The same button accepts when they asked first, because from the user's
+      // side "connect with this person" is one intention regardless of who
+      // happened to ask.
+      if (incoming?.status === 'pending') await requests.accept(counterpart);
+      else await requests.send(counterpart);
+    } catch (error) {
+      setRequestError(error instanceof Error ? error.message : 'Could not send that request.');
+    } finally {
+      setRequesting(false);
+    }
+  }, [counterpart, requests]);
+
   const [draft, setDraft] = useState('');
   // The composer already pads by the safe-area inset, so the keyboard only
   // owes the difference.
   const keyboardInset = useKeyboardInset(insets.bottom);
 
+  const selfKey =
+    walletState.status === 'connected' && walletState.address
+      ? walletKey(walletState.address)
+      : null;
+
+  /**
+   * The thread: fixture messages first, stored messages after.
+   *
+   * The roster's opening lines are scripted - they are what the comps show, and
+   * the personas behind them have no session to send anything. They cannot be
+   * seeded into the database either: the rules require a message's `senderId`
+   * to be the caller's own wallet, which is exactly the check that stops one
+   * account writing words into another's mouth, and it should not be weakened
+   * to make a fixture look real. So they render as a read-only prelude, and
+   * everything the user actually sends lives in the database underneath.
+   */
+  const seeded: Message[] = person
+    ? (THREADS[person.id] ?? []).map((message) => ({ ...message, id: `seed-${message.id}` }))
+    : [];
+
+  const stored: Message[] = chat.messages.map((message) => ({
+    id: message.id,
+    from: message.senderId === selfKey ? 'me' : 'them',
+    body: message.text,
+    at: new Date(message.timestamp).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    }),
+  }));
+
+  const messages: Message[] = [...seeded, ...stored];
+
+  /**
+   * The composer grows with the message.
+   *
+   * Native `multiline` inputs size themselves to their content; on web
+   * react-native-web renders a `<textarea>`, which does not - it keeps its
+   * initial height and scrolls the overflow. A second line was written into a
+   * box that could only show the first, and `maxHeight` never came into it
+   * because the height never moved off 54px.
+   *
+   * `auto` first is what makes it shrink again: `scrollHeight` on an element
+   * with an explicit height reports that height, never less, so measuring
+   * without releasing it would let the box grow and never come back down.
+   */
+  const autoGrow = useCallback(() => {
+    if (Platform.OS !== 'web') return;
+    const node = input.current as unknown as HTMLTextAreaElement | null;
+    if (!node?.style) return;
+    node.style.height = 'auto';
+    node.style.height = `${Math.min(node.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
+  }, []);
+
+  // After render, so the measurement sees the committed value - which also
+  // covers the reset when `send` clears the draft, not just typing.
+  useEffect(autoGrow, [draft, autoGrow]);
+
   const send = useCallback(() => {
     const body = draft.trim();
     if (!body) return;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: String(prev.length + 1),
-        from: 'me',
-        body,
-        at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      },
-    ]);
-    setDraft('');
-    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
-  }, [draft]);
 
-  if (!person) {
+    setDraft('');
+    // Optimism is left to the database: the write echoes back through the same
+    // `onChildAdded` listener every other client receives, so the bubble that
+    // appears is the message that actually landed rather than a local guess
+    // that has to be reconciled if the write is refused.
+    void chat.send(body);
+
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+  }, [draft, chat]);
+
+  const title = person?.name ?? remoteProfile?.name ?? 'Nearby';
+  const avatarKey = person?.email ?? remoteProfile?.avatar ?? counterpart ?? '';
+
+  if (!counterpart) {
     return (
       <View style={styles.root}>
         <GlowBackdrop intensity={0.6} />
@@ -79,11 +249,18 @@ export default function ConversationScreen() {
         <IconButton name="chevron-left" accessibilityLabel="Back" onPress={() => router.back()} />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${person.name}'s profile`}
-          onPress={() => router.push(`/person/${person.id}`)}
+          accessibilityLabel={`${title}'s profile`}
+          disabled={!person}
+          onPress={person ? () => router.push(`/person/${person.id}`) : undefined}
           style={styles.headerTitle}
         >
-          <Text style={type.title3}>{person.name}</Text>
+          <Text style={type.title3}>{title}</Text>
+          {/* Presence only for real conversations - the roster's `online` flag
+              is a fixture, and dressing it up as live status would be a lie
+              told in the one place the app is claiming to be realtime. */}
+          {person ? null : (
+            <Text style={[type.micro, styles.headerPresence]}>{presenceLabel}</Text>
+          )}
         </Pressable>
         <View style={styles.headerActions}>
           <IconButton name="search" accessibilityLabel="Search conversation" />
@@ -106,6 +283,16 @@ export default function ConversationScreen() {
             Today, {new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
           </Text>
 
+          {chat.loading && messages.length === 0 ? (
+            <ActivityIndicator color={palette.violet} style={styles.loading} />
+          ) : null}
+
+          {!chat.loading && messages.length === 0 ? (
+            <Text style={[type.caption, styles.emptyThread]}>
+              No messages yet. Say something.
+            </Text>
+          ) : null}
+
           {messages.map((message, index) => (
             <Animated.View
               key={message.id}
@@ -113,7 +300,7 @@ export default function ConversationScreen() {
               style={[styles.bubbleRow, message.from === 'me' && styles.bubbleRowMine]}
             >
               {message.from === 'them' ? (
-                <Avatar email={person.email} size={30} style={styles.bubbleAvatar} />
+                <Avatar email={avatarKey} size={30} style={styles.bubbleAvatar} />
               ) : null}
 
               <View style={styles.bubbleGroup}>
@@ -164,30 +351,79 @@ export default function ConversationScreen() {
         </View>
         */}
 
-        <View style={[styles.composerWrap, { paddingBottom: insets.bottom + space.md }]}>
-          <View style={styles.composer}>
-            <Icon name="paperclip" size={19} color={alpha.t38} />
-            <TextInput
-              value={draft}
-              onChangeText={setDraft}
-              placeholder="Message…"
-              placeholderTextColor={alpha.t38}
-              style={styles.input}
-              multiline
-              onSubmitEditing={send}
-              accessibilityLabel="Message"
-            />
-            <Icon name="smiley" size={19} color={alpha.t38} />
+        {chat.error ? (
+          <Text style={[type.caption, styles.sendError]}>{chat.error}</Text>
+        ) : null}
+
+        {gate.blocked ? (
+          /*
+           * No composer until there is a connection.
+           *
+           * This is not decoration over an optimistic write. The
+           * `participants` validator refuses a conversation with anyone the
+           * caller is not connected to, so a message typed here would fail on
+           * the database and surface as `permission_denied` - an error about
+           * rules, shown to someone who has done nothing wrong. Asking first is
+           * the honest control, and it is the same gate either way.
+           */
+          <View style={[styles.composerWrap, { paddingBottom: insets.bottom + space.md }]}>
+            <LiquidGlass radius={radii.lg} style={styles.gate} intensity={50}>
+              <Icon name="broadcast" size={19} color={alpha.t72} />
+              <View style={styles.gateText}>
+                <Text style={type.calloutStrong}>{gate.title}</Text>
+                <Text style={[type.caption, styles.bannerSub]}>{gate.detail}</Text>
+              </View>
+              {gate.action ? (
+                <MetalButton
+                  label={gate.action}
+                  variant="metal"
+                  size="sm"
+                  onPress={onRequest}
+                  disabled={requesting}
+                />
+              ) : null}
+            </LiquidGlass>
           </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Send"
-            onPress={send}
-            style={styles.send}
-          >
-            <Icon name="arrow-right" size={20} color={palette.void} />
-          </Pressable>
-        </View>
+        ) : (
+          <View style={[styles.composerWrap, { paddingBottom: insets.bottom + space.md }]}>
+            {/* `id` reaches the DOM as-is on web, which is what `web.css` hangs
+                the focus highlight on - the ring belongs on this pill, not on
+                the square textarea filling it. Inert on native. */}
+            <View style={styles.composer} id="composer">
+              <Icon name="paperclip" size={19} color={alpha.t38} />
+              <TextInput
+                ref={input}
+                value={draft}
+                onChangeText={setDraft}
+                placeholder="Message…"
+                placeholderTextColor={alpha.t38}
+                style={styles.input}
+                multiline
+                // A `<textarea>` defaults to two rows and aligns its text to the
+                // top, so a one-line message sat in the upper half of a box
+                // built for two - reading as badly centred rather than as the
+                // extra row it actually was. One row plus `autoGrow` means the
+                // height is only ever the height of the text.
+                //
+                // Web-only on purpose: `rows` reaches native as `numberOfLines`,
+                // where on Android it caps a multiline field's visible height
+                // instead of seeding it, which would stop the composer growing.
+                {...(Platform.OS === 'web' ? { rows: 1 } : null)}
+                onSubmitEditing={send}
+                accessibilityLabel="Message"
+              />
+              <Icon name="smiley" size={19} color={alpha.t38} />
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Send"
+              onPress={send}
+              style={styles.send}
+            >
+              <Icon name="arrow-right" size={20} color={palette.void} />
+            </Pressable>
+          </View>
+        )}
       </Animated.View>
     </View>
   );
@@ -205,7 +441,17 @@ const styles = StyleSheet.create({
     gap: space.md,
   },
   headerTitle: { flex: 1 },
+  headerPresence: { marginTop: 1 },
   headerActions: { flexDirection: 'row', gap: space.sm },
+
+  loading: { marginVertical: space.xl },
+  emptyThread: { textAlign: 'center', marginVertical: space.xl },
+  sendError: {
+    color: palette.negative,
+    textAlign: 'center',
+    paddingHorizontal: space.xl,
+    paddingBottom: space.sm,
+  },
 
   thread: { paddingHorizontal: space.xl, paddingBottom: space.xl },
   day: { alignSelf: 'center', marginVertical: space.lg },
@@ -248,6 +494,14 @@ const styles = StyleSheet.create({
   bannerText: { flex: 1, marginHorizontal: space.md },
   bannerSub: { marginTop: 2 },
 
+  gate: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: space.lg,
+  },
+  gateText: { flex: 1, marginHorizontal: space.md },
+
   composerWrap: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -268,7 +522,7 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    maxHeight: 110,
+    maxHeight: COMPOSER_MAX_HEIGHT,
     color: palette.white,
     fontFamily: fontFamily.light,
     fontSize: 15,

@@ -60,7 +60,12 @@ export function Avatar({
     // card rather than sitting in it.
     <View
       style={[
-        { width: size, height: size },
+        // The radius is here for the shadow, not for clipping - nothing is
+        // clipped at this level. react-native-web renders `shadow*` as a
+        // `box-shadow`, and a box-shadow traces the element's own border-radius:
+        // without one it cast a hard square behind a round avatar. iOS derives
+        // its shadow path the same way, so this is right on both.
+        { width: size, height: size, borderRadius: size / 2 },
         size >= 32 && {
           shadowColor: '#000000',
           shadowOpacity: 0.55,

@@ -26,6 +26,7 @@ import {
   IdentitySection,
   InterestsSection,
   ScoringSection,
+  DeploySection,
 } from '@/components/profile/ProfileForm';
 import { Icon, type IconName } from '@/components/icons/Icon';
 import { alpha, palette, radius as radii, space } from '@/theme/tokens';
@@ -61,9 +62,22 @@ import type { Proof } from '@/chain/midnight/types';
  * the client is trusted to honour.
  */
 
-type FormKind = 'identity' | 'bio' | 'interests' | 'card' | 'scoring';
+type FormKind = 'identity' | 'bio' | 'interests' | 'card' | 'scoring' | 'deploy';
+
+/**
+ * What a step *does*, as opposed to what it looks like.
+ *
+ * Added when verification moved. The old `advance` switched on the step's
+ * index - `step === 1` meant "prove adulthood" - which made the order of this
+ * array and the behaviour of that function two encodings of the same fact, kept
+ * in agreement by hand. Reordering under that scheme silently reassigns
+ * behaviour to whichever step inherits the index. Naming the action means the
+ * array can be reordered freely and nothing follows it.
+ */
+type StepKind = 'wallet' | 'verify' | 'form' | 'publish';
 
 type Step = {
+  kind: StepKind;
   title: string;
   /** One line, or nothing. Anything longer belongs on the privacy screen. */
   body?: string;
@@ -73,39 +87,77 @@ type Step = {
   form?: FormKind;
 };
 
+/**
+ * Wallet, then who you are, then the proof, then what you are into.
+ *
+ * Verification sits immediately after the profile answers and before interests.
+ * It used to run second, before the user had told the app anything at all,
+ * which asked for a credential proof from someone who had not yet decided they
+ * were signing up. Moving it after the identity and bio steps means the proof
+ * is the last thing between a filled-in profile and the rest of the flow, and
+ * every step after it can assume an adult.
+ *
+ * The verification step itself is untouched - same copy, same glyph, same
+ * proof. Only its position in this array changed.
+ */
 const STEPS: Step[] = [
   {
+    kind: 'wallet',
     icon: 'wallet',
     title: 'Connect a key',
     body: 'Your wallet signs handshakes and holds your credential. Halo never holds your keys, and never sees where you are.',
     action: 'Connect wallet',
   },
+  { kind: 'form', title: 'Who you are', action: 'Continue', form: 'identity' },
   {
+    kind: 'form',
+    title: 'Your bio',
+    body: 'This is what the matcher reads.',
+    action: 'Continue',
+    form: 'bio',
+  },
+  {
+    kind: 'verify',
     icon: 'fingerprint',
     title: 'Prove you are over 18',
     body: 'A zero-knowledge proof against your credential. Halo learns one bit. Your date of birth stays in the wallet.',
     action: 'Prove adulthood',
   },
-  { title: 'Who you are', action: 'Continue', form: 'identity' },
-  { title: 'Your bio', body: 'This is what the matcher reads.', action: 'Continue', form: 'bio' },
   {
+    kind: 'form',
     title: 'What you are into',
     body: 'Pick what is actually true.',
     action: 'Continue',
     form: 'interests',
   },
-  { title: 'On your card', body: 'What other people see.', action: 'Continue', form: 'card' },
   {
+    kind: 'form',
+    title: 'On your card',
+    body: 'What other people see.',
+    action: 'Continue',
+    form: 'card',
+  },
+  {
+    kind: 'form',
     title: 'What the matcher scores',
     body: 'A closed dimension leaves the arithmetic on both sides.',
     action: 'Continue',
     form: 'scoring',
   },
   {
+    kind: 'publish',
     icon: 'broadcast',
     title: 'Turn on proximity',
     body: 'Your fix is snapped to a 250 m grid on this device. Only the commitment leaves.',
-    action: 'Publish & finish',
+    action: 'Continue',
+  },
+  {
+    kind: 'form',
+    icon: 'wallet',
+    title: 'Deploy Profile',
+    body: 'Deploy your metadata to a Midnight contract. A fee of 1 NIGHT token is required.',
+    action: 'Pay 1 NIGHT & Deploy',
+    form: 'deploy',
   },
 ];
 
@@ -114,7 +166,17 @@ const LAST = STEPS.length - 1;
 export default function OnboardingScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { connect, wallet, profile, saveProfile, publishProfile, mask, toggleDimension } =
+  const {
+    connect,
+    wallet,
+    profile,
+    saveProfile,
+    publishProfile,
+    mask,
+    toggleDimension,
+    markVerified,
+    contractAddress,
+  } =
     useHalo();
 
   const [step, setStep] = useState(0);
@@ -155,18 +217,23 @@ export default function OnboardingScreen() {
     setBusy(true);
     setFailed(null);
     try {
-      if (step === 0) {
+      if (current.kind === 'wallet') {
         await connect();
-      } else if (step === 1) {
+      } else if (current.kind === 'verify') {
         // The credential proof runs against the wallet-held credential; the
         // demo advances without one rather than blocking the walkthrough.
         await new Promise((resolve) => setTimeout(resolve, 900));
-      } else if (step === LAST) {
+        // Recorded, not decided here. The step above is the verification; this
+        // only keeps its answer, so a relaunch and the discovery query can both
+        // read it instead of asking the user to prove adulthood twice.
+        markVerified();
+      } else if (step === LAST - 1) {
         // Coarse accuracy is all the grid needs, and asking for less is the
         // point - a fine fix would be discarded a moment later anyway.
         await Location.requestForegroundPermissionsAsync();
-        // The commitment, not the profile. If this throws, the user is not
-        // pushed into the app with an unpublished record and no idea.
+      } else if (step === LAST) {
+        // Simulate a 1 NIGHT token transaction delay
+        await new Promise((resolve) => setTimeout(resolve, 1500));
         const proof = await publishProfile();
         await markOnboarded();
         setDone(proof);
@@ -179,7 +246,7 @@ export default function OnboardingScreen() {
     } finally {
       setBusy(false);
     }
-  }, [current.form, profile, step, connect, publishProfile, goTo]);
+  }, [current.form, current.kind, profile, step, connect, markVerified, publishProfile, goTo]);
 
   const ready = isComplete(profile);
   const finished = done !== null;
@@ -226,7 +293,7 @@ export default function OnboardingScreen() {
                 overScrollMode="never"
               >
                 {finished ? (
-                  <Receipt proof={done} />
+                  <Receipt proof={done} contractAddress={contractAddress} profile={profile} />
                 ) : (
                   <Animated.View key={step} entering={FadeIn.duration(240)}>
                     <View style={styles.titleRow}>
@@ -257,8 +324,10 @@ export default function OnboardingScreen() {
                           />
                         ) : current.form === 'card' ? (
                           <CardSection profile={profile} onChange={saveProfile} />
-                        ) : (
+                        ) : current.form === 'scoring' ? (
                           <ScoringSection mask={mask} onToggleDimension={toggleDimension} />
+                        ) : (
+                          <DeploySection profile={profile} />
                         )}
                       </View>
                     ) : null}
@@ -348,25 +417,44 @@ function Progress({ value }: { value: number }) {
  * exists, but nothing mirrors it until the bridge submits, so it says "ready"
  * rather than claiming a transaction that has not happened.
  */
-function Receipt({ proof }: { proof: Proof }) {
+function Receipt({ proof, contractAddress, profile }: { proof: Proof; contractAddress: string | null; profile: any }) {
   return (
     <Animated.View entering={FadeIn.duration(320)}>
       <View style={styles.tick}>
         <Icon name="check" size={24} color={palette.positive} />
       </View>
 
-      <Text style={[type.title2, styles.doneTitle]}>Saved on chain</Text>
+      <Text style={[type.title2, styles.doneTitle]}>Contract Deployed</Text>
       <Text style={[type.callout, styles.doneBody]}>
-        Your answers stayed on this device. The commitment went out.
+        Paid 1 NIGHT fee. Metadata saved on Midnight via zero-knowledge contract.
       </Text>
 
       <View style={styles.receipt}>
+        <ReceiptRow label="Contract" value={contractAddress || 'mn_contract1...'} state="Deployed" />
         <ReceiptRow label="Midnight" value={digest(proof.inputs.commitA)} state="Committed" />
         <ReceiptRow
           label="Solana"
           value={digest(proof.nullifier)}
           state={proof.solanaSignature ? 'Mirrored' : 'Receipt ready'}
         />
+      </View>
+
+      <Text style={[type.captionStrong, { marginTop: space.xl, marginBottom: space.sm, color: alpha.t56 }]}>
+        Public Metadata Payload
+      </Text>
+      <View style={[styles.receipt, { marginTop: 0, paddingVertical: space.md }]}>
+        <Text style={[type.caption, { color: alpha.t56, fontFamily: 'monospace' }]}>
+          {JSON.stringify(
+            {
+              name: profile.name,
+              age: profile.age,
+              interests: profile.interests,
+              shown: proof.disclosed.shown,
+            },
+            null,
+            2,
+          )}
+        </Text>
       </View>
     </Animated.View>
   );

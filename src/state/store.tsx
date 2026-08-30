@@ -7,7 +7,7 @@ import {
   MODEL_WEIGHTS,
   type Dimension,
 } from '@/ai/matching';
-import { resolveConnector, type Connector } from '@/chain/midnight/connector';
+import { resolveConnector, restoreSession, type Connector } from '@/chain/midnight/connector';
 import {
   cellCommitment,
   modelCommitment,
@@ -19,7 +19,9 @@ import {
 } from '@/chain/midnight/prover';
 import type { DistanceBucket, Hex, MatchBand, Proof, WalletState } from '@/chain/midnight/types';
 import { probeProofServer } from '@/chain/config';
+import { DEFAULT_RADIUS } from '@/firebase/geo';
 import { maskFor, PEOPLE_BY_ID, SELF, SELF_VECTOR, VECTORS } from '@/data/people';
+import { hasOnboarded } from '@/state/onboarding';
 import {
   canonicalise,
   emptyProfile,
@@ -42,15 +44,36 @@ import {
 
 const KEY_VISIBILITY = 'halo.visibility';
 const KEY_MASK = 'halo.mask';
+const KEY_VERIFIED = 'halo.verified';
+const KEY_DISCOVERY = 'halo.discovery';
 
 export type Visibility = {
-  /** Broadcasting at all. Off means invisible, and no proofs are produced. */
+  /**
+   * Broadcasting at all. Off means invisible, and no proofs are produced.
+   *
+   * This is also the location-sharing switch. It was tempting to add a second
+   * one next to it, but "am I publishing where I am?" and "may people find me?"
+   * are the same question asked twice, and two switches that must agree are two
+   * switches that will eventually disagree.
+   */
   live: boolean;
   /** Widest bucket anyone may prove against you. */
   maxBucket: DistanceBucket;
   /** Epoch ms when broadcasting auto-stops. The comps' "visible for 30 min". */
   until: number | null;
 };
+
+/**
+ * The result of the onboarding adulthood step.
+ *
+ * Recorded, not re-derived. Nothing in this file decides whether someone is
+ * verified - the existing proof step in onboarding does, and this is where its
+ * answer is kept so that a relaunch, and the discovery query, can both read it.
+ */
+export type Verification = { ok: boolean; at: number | null };
+
+/** How far the user is willing to look. Metres, always. See `firebase/geo`. */
+export type Discovery = { radius: number };
 
 export type HaloState = {
   wallet: WalletState;
@@ -67,6 +90,14 @@ export type HaloState = {
 
   visibility: Visibility;
   setVisibility: (next: Partial<Visibility>) => void;
+
+  /** Outcome of the onboarding adulthood proof. Survives relaunch. */
+  verified: Verification;
+  /** Records that the existing verification step passed. Does not perform it. */
+  markVerified: () => void;
+
+  discovery: Discovery;
+  setDiscovery: (next: Partial<Discovery>) => void;
 
   /** Per-dimension consent. Index-aligned with `DIMENSIONS`. */
   mask: number[];
@@ -97,11 +128,28 @@ export type HaloState = {
   /** True once a real proof server answered a health check. */
   liveProver: boolean;
   ready: boolean;
+  
+  /** Simulated deployed contract address */
+  contractAddress: string | null;
 };
 
 type PhaseHandler = (phase: 'witnessing' | 'proving' | 'submitting') => void;
 
 const HaloContext = createContext<HaloState | null>(null);
+
+/**
+ * The address the simulated profile deploy reports.
+ *
+ * This used to be 52 random bech32 characters generated per publish, which
+ * meant the receipt showed a different contract every run and nothing on the
+ * screen could be checked against anything off it. A fixed address is the same
+ * fiction told consistently: the record it stands for is one contract, so
+ * screenshots, the receipt, and anyone reading over a shoulder all agree.
+ *
+ * Still a mock. It is not deployed, and the day a real deploy exists this is
+ * the line it replaces - the return value of that call, not a constant.
+ */
+const DEPLOYED_CONTRACT = 'mn_contract1qpzry9x8gf2tvdw0s3jn54khce6mua7l8x9j3k2p5s4m6t2v';
 
 export function HaloProvider({ children }: { children: React.ReactNode }) {
   const [wallet, setWallet] = useState<WalletState>({ status: 'disconnected' });
@@ -116,8 +164,11 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
     until: Date.now() + 30 * 60 * 1000,
   });
   const [mask, setMask] = useState<number[]>(defaultMask);
+  const [verified, setVerifiedState] = useState<Verification>({ ok: false, at: null });
+  const [discovery, setDiscoveryState] = useState<Discovery>({ radius: DEFAULT_RADIUS });
   const [profile, setProfileState] = useState<HaloProfile>(emptyProfile);
   const [profileCommit, setProfileCommit] = useState<Hex | null>(null);
+  const [contractAddress, setContractAddress] = useState<string | null>(null);
 
   // Salts are generated once per session and never persisted. Rotating them on
   // every launch means yesterday's published commitments cannot be linked to
@@ -137,14 +188,62 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
     let alive = true;
 
     (async () => {
-      const [storedVisibility, storedMask, storedProfile] = await Promise.all([
-        AsyncStorage.getItem(KEY_VISIBILITY),
-        AsyncStorage.getItem(KEY_MASK),
-        loadProfile(),
-      ]);
+      const [storedVisibility, storedMask, storedVerified, storedDiscovery, storedProfile] =
+        await Promise.all([
+          AsyncStorage.getItem(KEY_VISIBILITY),
+          AsyncStorage.getItem(KEY_MASK),
+          AsyncStorage.getItem(KEY_VERIFIED),
+          AsyncStorage.getItem(KEY_DISCOVERY),
+          loadProfile(),
+        ]);
       if (!alive) return;
 
       if (storedProfile) setProfileState(storedProfile);
+
+      /*
+       * Bring back the wallet from the last launch.
+       *
+       * Every other preference here was already restored; the wallet was not,
+       * and it start()ed every cold boot at `disconnected`. Since `onboarding`
+       * is the only caller of `connect()`, the second launch never had an
+       * address - so `claimWallet` never ran, `owned` stayed false, and
+       * publishing, presence, discovery and requests all quietly did nothing
+       * while the UI reported it as a location-permission problem.
+       *
+       * `restoreSession` creates nothing. A user who has not onboarded gets
+       * null and still goes to onboarding.
+       */
+      const restored = await restoreSession().catch(() => null);
+      if (!alive) return;
+      if (restored) {
+        setConnector(restored.connector);
+        setWallet(restored.state);
+      }
+
+      if (storedVerified) {
+        try {
+          const parsed = JSON.parse(storedVerified) as Verification;
+          if (typeof parsed?.ok === 'boolean') setVerifiedState(parsed);
+        } catch {
+          /* ignore */
+        }
+      } else if (await hasOnboarded()) {
+        // An install that finished onboarding before the flag existed. It
+        // passed the same verification step - there was simply nowhere to
+        // record it - and without this it would silently never be eligible for
+        // discovery, with no way to fix it short of reinstalling.
+        const migrated: Verification = { ok: true, at: null };
+        setVerifiedState(migrated);
+        void AsyncStorage.setItem(KEY_VERIFIED, JSON.stringify(migrated));
+      }
+      if (storedDiscovery) {
+        try {
+          const parsed = JSON.parse(storedDiscovery) as Discovery;
+          if (typeof parsed?.radius === 'number') setDiscoveryState(parsed);
+        } catch {
+          /* ignore */
+        }
+      }
 
       if (storedVisibility) {
         try {
@@ -211,6 +310,22 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
     setVisibilityState((prev) => {
       const merged = { ...prev, ...next };
       void AsyncStorage.setItem(KEY_VISIBILITY, JSON.stringify(merged));
+      return merged;
+    });
+  }, []);
+
+  const markVerified = useCallback(() => {
+    setVerifiedState(() => {
+      const next: Verification = { ok: true, at: Date.now() };
+      void AsyncStorage.setItem(KEY_VERIFIED, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const setDiscovery = useCallback((next: Partial<Discovery>) => {
+    setDiscoveryState((prev) => {
+      const merged = { ...prev, ...next };
+      void AsyncStorage.setItem(KEY_DISCOVERY, JSON.stringify(merged));
       return merged;
     });
   }, []);
@@ -354,6 +469,8 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
         { onPhase },
       );
 
+      // The deploy is simulated; the address it reports is not re-rolled.
+      setContractAddress(DEPLOYED_CONTRACT);
       setProfileCommit(commit);
       return record(proof);
     },
@@ -371,6 +488,10 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
       modelCommit,
       visibility,
       setVisibility,
+      verified,
+      markVerified,
+      discovery,
+      setDiscovery,
       mask,
       toggleDimension,
       profile,
@@ -383,6 +504,7 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
       proveMatch: proveMatchFor,
       liveProver,
       ready,
+      contractAddress,
     }),
     [
       wallet,
@@ -394,6 +516,10 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
       modelCommit,
       visibility,
       setVisibility,
+      verified,
+      markVerified,
+      discovery,
+      setDiscovery,
       mask,
       toggleDimension,
       profile,
@@ -406,6 +532,7 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
       proveMatchFor,
       liveProver,
       ready,
+      contractAddress,
     ],
   );
 
