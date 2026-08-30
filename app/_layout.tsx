@@ -72,6 +72,7 @@ export default function RootLayout() {
                 />
                 <Stack.Screen name="privacy" options={{ animation: 'slide_from_right' }} />
                 <Stack.Screen name="profile-edit" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="verify-face" options={{ animation: 'slide_from_right' }} />
               </Stack>
             </View>
           </FirebaseProvider>

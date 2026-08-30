@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 import * as Haptics from 'expo-haptics';
 import { Segmented, TextField, ToggleRow } from '@/components/ui/Field';
 import { Icon } from '@/components/icons/Icon';
+import { NETWORK_FEE } from '@/components/wallet/WalletApproval';
 import { alpha, palette, radius as radii, space } from '@/theme/tokens';
 import { fontFamily, type } from '@/theme/typography';
 import { DIMENSIONS, SENSITIVE_BY_DEFAULT, type Dimension } from '@/ai/matching';
@@ -431,7 +432,7 @@ export function DeploySection({ profile }: { profile: HaloProfile }) {
       </View>
       <View style={styles.deployFee}>
         <Text style={[type.body, { color: palette.white }]}>Network Fee</Text>
-        <Text style={[type.body, { color: palette.positive }]}>1 NIGHT</Text>
+        <Text style={[type.body, { color: palette.positive }]}>{NETWORK_FEE}</Text>
       </View>
     </View>
   );

@@ -28,6 +28,12 @@ import {
   ScoringSection,
   DeploySection,
 } from '@/components/profile/ProfileForm';
+import { FaceCapture } from '@/components/verify/FaceCapture';
+import {
+  NETWORK_FEE,
+  WalletApproval,
+  WALLET_HOLD_MS,
+} from '@/components/wallet/WalletApproval';
 import { Icon, type IconName } from '@/components/icons/Icon';
 import { alpha, palette, radius as radii, space } from '@/theme/tokens';
 import { type } from '@/theme/typography';
@@ -39,7 +45,7 @@ import type { Proof } from '@/chain/midnight/types';
 /**
  * Onboarding.
  *
- * Eight short steps in one fixed frame. Two things about that are deliberate.
+ * Ten short steps in one fixed frame. Two things about that are deliberate.
  *
  * *Fixed*: the screen does not scroll. Header, progress and the action button
  * are pinned to the same pixels on every step, so moving through the flow never
@@ -50,7 +56,7 @@ import type { Proof } from '@/chain/midnight/types';
  * Content that cannot fit - a form with the keyboard up - scrolls *inside* the
  * panel, which is the one place scrolling costs nothing.
  *
- * *Eight*: the three form steps used to carry twenty-six controls between them,
+ * *Ten*: the three form steps used to carry twenty-six controls between them,
  * so two of them ran past a screen-height and the button that ends a step was
  * below the fold. Splitting costs two extra taps and buys a form that always
  * fits the screen it is asked on.
@@ -62,7 +68,7 @@ import type { Proof } from '@/chain/midnight/types';
  * the client is trusted to honour.
  */
 
-type FormKind = 'identity' | 'bio' | 'interests' | 'card' | 'scoring' | 'deploy';
+type FormKind = 'identity' | 'bio' | 'interests' | 'face' | 'card' | 'scoring' | 'deploy';
 
 /**
  * What a step *does*, as opposed to what it looks like.
@@ -88,7 +94,8 @@ type Step = {
 };
 
 /**
- * Wallet, then who you are, then the proof, then what you are into.
+ * Wallet, then who you are, then the proof, then your face, then what you are
+ * into.
  *
  * Verification sits immediately after the profile answers and before interests.
  * It used to run second, before the user had told the app anything at all,
@@ -123,6 +130,27 @@ const STEPS: Step[] = [
     body: 'A zero-knowledge proof against your credential. Halo learns one bit. Your date of birth stays in the wallet.',
     action: 'Prove adulthood',
   },
+  /**
+   * The photo check sits next to the adulthood proof, and after it.
+   *
+   * Next to, because both steps answer "is there a real adult here?" and a user
+   * who has just been asked to prove one is already in the frame of mind to be
+   * asked the other. After, because this is the more invasive of the two by a
+   * wide margin - it asks for a face rather than a bit - and the cheaper
+   * question should be the one that comes first.
+   *
+   * It does not block. The footer advances whether or not anything was
+   * captured, and the profile screen carries the row for anyone who moved on:
+   * a signup that cannot be finished without a working camera in good light is
+   * a signup that some people simply cannot finish.
+   */
+  {
+    kind: 'form',
+    title: 'Show your face',
+    body: 'Three photos, reviewed by a person. You can do this later from your profile instead.',
+    action: 'Continue',
+    form: 'face',
+  },
   {
     kind: 'form',
     title: 'What you are into',
@@ -155,8 +183,8 @@ const STEPS: Step[] = [
     kind: 'form',
     icon: 'wallet',
     title: 'Deploy Profile',
-    body: 'Deploy your metadata to a Midnight contract. A fee of 1 NIGHT token is required.',
-    action: 'Pay 1 NIGHT & Deploy',
+    body: `Deploy your metadata to a Midnight contract. A fee of ${NETWORK_FEE} token is required.`,
+    action: `Pay ${NETWORK_FEE} & Deploy`,
     form: 'deploy',
   },
 ];
@@ -185,6 +213,8 @@ export default function OnboardingScreen() {
   const [failed, setFailed] = useState<string | null>(null);
   /** Set once the record is on chain. Replaces the step panel with the receipt. */
   const [done, setDone] = useState<Proof | null>(null);
+  /** True only while the wallet has the screen. See `approveFee`. */
+  const [approving, setApproving] = useState(false);
   const panel = useRef<ScrollView>(null);
   // The frame already pads by the safe-area inset; the keyboard adds the rest.
   const keyboardInset = useKeyboardInset(insets.bottom);
@@ -198,6 +228,23 @@ export default function OnboardingScreen() {
     // The panel is the only thing that scrolls, so it is the only thing that
     // needs resetting between steps.
     panel.current?.scrollTo({ y: 0, animated: false });
+  }, []);
+
+  /**
+   * Holds the wallet open for exactly one beat, then hands the screen back.
+   *
+   * `finally` rather than a plain reset: if the hold is ever replaced by a real
+   * signing call, a rejection there must still close the wallet. Leaving an
+   * un-dismissable approval on screen after a failed transaction would be the
+   * worst possible way to lose it.
+   */
+  const approveFee = useCallback(async () => {
+    setApproving(true);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, WALLET_HOLD_MS));
+    } finally {
+      setApproving(false);
+    }
   }, []);
 
   const advance = useCallback(async () => {
@@ -232,8 +279,11 @@ export default function OnboardingScreen() {
         // point - a fine fix would be discarded a moment later anyway.
         await Location.requestForegroundPermissionsAsync();
       } else if (step === LAST) {
-        // Simulate a 1 NIGHT token transaction delay
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        // The fee is agreed to before anything is published, which is the order
+        // a real deploy runs in - and it replaces the bare 1.5s delay that used
+        // to stand in for it. `advance` cannot re-enter while `busy`, so the
+        // wallet opens exactly once per press.
+        await approveFee();
         const proof = await publishProfile();
         await markOnboarded();
         setDone(proof);
@@ -246,7 +296,17 @@ export default function OnboardingScreen() {
     } finally {
       setBusy(false);
     }
-  }, [current.form, current.kind, profile, step, connect, markVerified, publishProfile, goTo]);
+  }, [
+    current.form,
+    current.kind,
+    profile,
+    step,
+    connect,
+    markVerified,
+    approveFee,
+    publishProfile,
+    goTo,
+  ]);
 
   const ready = isComplete(profile);
   const finished = done !== null;
@@ -322,6 +382,8 @@ export default function OnboardingScreen() {
                             onChange={saveProfile}
                             showErrors={showErrors}
                           />
+                        ) : current.form === 'face' ? (
+                          <FaceCapture />
                         ) : current.form === 'card' ? (
                           <CardSection profile={profile} onChange={saveProfile} />
                         ) : current.form === 'scoring' ? (
@@ -337,8 +399,8 @@ export default function OnboardingScreen() {
             </LiquidGlass>
           </View>
 
-          {/* Pinned. The primary action lands under the same thumb on all eight
-              steps, which is most of what makes a flow feel built rather than
+          {/* Pinned. The primary action lands under the same thumb on every
+              step, which is most of what makes a flow feel built rather than
               assembled. */}
           <View style={styles.footer}>
             {failed ? <Text style={[type.caption, styles.failed]}>{failed}</Text> : null}
@@ -375,6 +437,14 @@ export default function OnboardingScreen() {
           </View>
         </View>
       </Animated.View>
+
+      {/* Outside the frame, deliberately: it is another application taking the
+          screen, not a panel within this one. */}
+      <WalletApproval
+        visible={approving}
+        address={wallet.status === 'connected' ? wallet.address : null}
+        walletName={wallet.status === 'connected' ? wallet.name : undefined}
+      />
     </View>
   );
 }

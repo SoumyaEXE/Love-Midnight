@@ -25,6 +25,7 @@ import { PROOF_LABEL } from '@/chain/midnight/prover';
 import { SELF } from '@/data/people';
 import { useHalo } from '@/state/store';
 import { clearOnboarded } from '@/state/onboarding';
+import { REVIEW_WINDOW_LABEL, reviewCountdown } from '@/state/faceCheck';
 import { GENDER_LABEL, SHOWABLE, SHOWABLE_COPY, isComplete } from '@/state/profile';
 
 /**
@@ -50,6 +51,7 @@ export default function ProfileScreen() {
     liveProver,
     profile,
     profileCommit,
+    faceCheck,
   } = useHalo();
 
   const [copied, setCopied] = useState(false);
@@ -91,6 +93,14 @@ export default function ProfileScreen() {
           ) : null}
           <View style={styles.heroBadges}>
             <Badge label="Adult, proved" tone="metal" icon="verified" />
+            {/* Absent while the check has never been asked for - the row lower
+                down is the invitation, and a badge reading "not verified" would
+                be a scarlet letter for a step that is optional. */}
+            {faceCheck.status === 'verified' ? (
+              <Badge label="ID verified" tone="positive" icon="verified" />
+            ) : faceCheck.status === 'pending' ? (
+              <Badge label="ID in review" tone="neutral" icon="clock" />
+            ) : null}
             <Badge
               label={liveProver ? 'Live prover' : 'Local prover'}
               tone={liveProver ? 'positive' : 'neutral'}
@@ -162,6 +172,27 @@ export default function ProfileScreen() {
             title={hasProfile ? 'Edit profile' : 'Set up your profile'}
             subtitle="Answers, interests, and what you show"
             onPress={() => router.push('/profile-edit')}
+          />
+
+          {/* The row says where the review actually stands rather than always
+              inviting a submission. Someone who sent their photos an hour ago
+              is looking for a countdown, not a second upload button. */}
+          <SettingRow
+            icon={faceCheck.status === 'verified' ? 'verified' : 'shield-check'}
+            tone={faceCheck.status === 'verified' ? 'violet' : 'default'}
+            title={
+              faceCheck.status === 'verified'
+                ? 'ID verified'
+                : faceCheck.status === 'pending'
+                  ? 'ID under review'
+                  : 'Verify your ID'
+            }
+            subtitle={
+              faceCheck.status === 'none'
+                ? `Three photos of your face · ${REVIEW_WINDOW_LABEL}`
+                : reviewCountdown(faceCheck)
+            }
+            onPress={() => router.push('/verify-face')}
           />
 
           {profileCommit ? (
@@ -382,7 +413,14 @@ const styles = StyleSheet.create({
   cardMuted: { color: alpha.t38, lineHeight: 20 },
   cardTags: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.lg },
   cardShown: { marginTop: 4, color: alpha.t72 },
-  heroBadges: { flexDirection: 'row', gap: space.sm, marginTop: space.md },
+  /** Wraps: a third badge appears once an ID review is in flight. */
+  heroBadges: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: space.sm,
+    marginTop: space.md,
+  },
 
   section: { paddingHorizontal: space.xl, gap: space.md },
   settings: { gap: space.sm },

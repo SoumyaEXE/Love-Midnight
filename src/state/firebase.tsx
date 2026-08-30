@@ -19,6 +19,7 @@ import {
   requestFix,
   publishLocation,
   watchLocation,
+  type FixOutcome,
   type LocationError,
   type LocationWatch,
 } from '@/services/locationService';
@@ -65,8 +66,13 @@ export type FirebaseSession = {
    * Asks for a fix, prompting for permission if needed. Call from a user
    * gesture - a browser reports `prompt` rather than `granted` until something
    * asks, so the passive read at boot returns nothing on web.
+   *
+   * Reports why, when it fails. The caller needs that: a map sitting over the
+   * wrong city is the one outcome the user cannot diagnose by looking at it,
+   * and "you blocked this site" and "this machine cannot locate itself" call
+   * for completely different next steps.
    */
-  locate: () => Promise<void>;
+  locate: () => Promise<FixOutcome>;
   /** True while a location watch is running. */
   sharing: boolean;
   /** Epoch ms of the last successful position write. */
@@ -155,10 +161,12 @@ export function FirebaseProvider({ children }: { children: React.ReactNode }) {
   }, [uid, address]);
 
   const locate = useCallback(async () => {
-    const fix = await requestFix();
-    // A refusal is not an error worth surfacing: the map keeps its fallback
-    // origin, which is exactly the state the user was already in.
-    if (fix) setHere(fix);
+    const outcome = await requestFix();
+    // A refusal is not an error worth *raising* - it does not belong in the
+    // problem card next to a permission failure - but it is worth returning, so
+    // the control that asked can say the map stayed where it was and why.
+    if (outcome.ok) setHere(outcome.coords);
+    return outcome;
   }, []);
 
   const sync = useCallback(async () => {

@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import * as Location from 'expo-location';
 import { ref, remove, set } from 'firebase/database';
 import { database } from '@/firebase/config';
@@ -63,6 +64,80 @@ export type LocationError =
   | 'permission-denied'
   | 'unavailable'
   | 'write-failed';
+
+/**
+ * Why a one-off fix did not arrive.
+ *
+ * Three outcomes rather than a null, because the three need different sentences
+ * on screen and the user can only act on one of them. "You blocked this site",
+ * "your machine has no way to locate itself" and "nothing came back at all" are
+ * the same blank map for entirely different reasons.
+ */
+export type FixOutcome =
+  | { ok: true; coords: Coords }
+  | { ok: false; reason: 'denied' | 'unavailable' | 'timeout' };
+
+/**
+ * Milliseconds. How long the *machine* may take before we give up on it.
+ *
+ * There has to be a number here, and the reason is specific to the browser.
+ * `expo-location`'s web backend calls `navigator.geolocation.getCurrentPosition`
+ * without a `timeout` in its options - both when it prompts for permission and
+ * when it reads a position - and the W3C default for that field is `Infinity`.
+ * On a device that cannot locate itself at all (a desktop with no GPS and the
+ * OS location service switched off) some browsers then call neither the success
+ * nor the error callback, ever. The promise does not reject, so a `catch` never
+ * runs and a spinner tied to it spins for the rest of the session.
+ *
+ * A deadline turns that into an answer. Twelve seconds is well past a cold GPS
+ * lock and well short of the point where a person concludes the button is dead.
+ */
+const FIX_DEADLINE = 12_000;
+
+/**
+ * Milliseconds, and deliberately much longer.
+ *
+ * This one spans a dialog a human has to answer, so it is not measuring the
+ * machine - it is the backstop for the same never-settles bug happening *after*
+ * the user presses Allow. Tripping it is cheap: permission has been granted by
+ * then, so tapping again skips the prompt entirely and takes the fast path.
+ */
+const PROMPT_DEADLINE = 25_000;
+
+/**
+ * Resolves to `expired` if `work` has not settled in time.
+ *
+ * The timer is cleared on the way out so a resolved call does not hold the
+ * event loop open for the remainder of the deadline.
+ */
+async function withDeadline<T>(work: Promise<T>, ms: number, expired: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(expired), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Options for a one-off read.
+ *
+ * `timeout` is not part of expo's `LocationOptions`, hence the cast - but on
+ * web every option is spread straight into the W3C call, so this is the only
+ * way to give the browser its own deadline rather than relying solely on the
+ * race above. Native has no such field and ignores it, so it is only sent
+ * where it means something.
+ */
+const ONE_SHOT = {
+  // Balanced is ~100 m, finer than anything this app displays.
+  accuracy: Location.Accuracy.Balanced,
+  ...(Platform.OS === 'web' ? { timeout: FIX_DEADLINE } : null),
+} as Location.LocationOptions;
 
 export type LocationWatchHandlers = {
   onFix?: (coords: Coords & { accuracy: number | null }) => void;
@@ -131,9 +206,12 @@ export async function currentFix(): Promise<Coords | null> {
     const { status } = await Location.getForegroundPermissionsAsync();
     if (status !== Location.PermissionStatus.GRANTED) return null;
 
-    const position = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
-    });
+    // Deadlined for the same reason `requestFix` is. This one runs at boot and
+    // nothing is watching it, so a hang here is invisible rather than annoying
+    // - but it would also pin an unresolved promise for the whole session.
+    const position = await withDeadline(Location.getCurrentPositionAsync(ONE_SHOT), FIX_DEADLINE, null);
+    if (!position) return null;
+
     return {
       latitude: position.coords.latitude,
       longitude: position.coords.longitude,
@@ -158,20 +236,60 @@ export async function currentFix(): Promise<Coords | null> {
  * So this exists to be called from a user gesture, where a permission dialog is
  * expected rather than ambient. It still publishes nothing.
  */
-export async function requestFix(): Promise<Coords | null> {
+export async function requestFix(): Promise<FixOutcome> {
   try {
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== Location.PermissionStatus.GRANTED) return null;
+    /*
+     * Read before asking.
+     *
+     * `requestForegroundPermissionsAsync` on web only raises a dialog when the
+     * browser reports `prompt`; for `granted` and `denied` it answers from the
+     * Permissions API immediately. Checking first therefore costs nothing and
+     * buys the distinction that matters here: an already-granted user never
+     * enters the branch that can block on a dialog, so their wait is bounded by
+     * `FIX_DEADLINE` alone rather than by the much longer prompt backstop.
+     */
+    const existing = await Location.getForegroundPermissionsAsync().catch(() => null);
 
-    const position = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
-    });
+    if (existing?.status === Location.PermissionStatus.DENIED && !existing.canAskAgain) {
+      return { ok: false, reason: 'denied' };
+    }
+
+    if (existing?.status !== Location.PermissionStatus.GRANTED) {
+      const asked = await withDeadline(
+        Location.requestForegroundPermissionsAsync(),
+        PROMPT_DEADLINE,
+        null,
+      );
+      if (!asked) return { ok: false, reason: 'timeout' };
+      /*
+       * `granted` rather than `status`, and that is not a style choice.
+       *
+       * When the browser raises the dialog, expo's web backend resolves the
+       * non-denial error branch as `{ status: GRANTED, granted: false }` - so a
+       * device that showed the prompt, was allowed, and then failed to produce
+       * a position reports a GRANTED *status* with no permission behind it.
+       * Testing `status` alone would read that as success and fall through to a
+       * position read that cannot succeed either.
+       */
+      if (!asked.granted) {
+        return { ok: false, reason: asked.status === Location.PermissionStatus.DENIED ? 'denied' : 'unavailable' };
+      }
+    }
+
+    const position = await withDeadline(Location.getCurrentPositionAsync(ONE_SHOT), FIX_DEADLINE, null);
+    if (!position) return { ok: false, reason: 'timeout' };
+
     return {
-      latitude: position.coords.latitude,
-      longitude: position.coords.longitude,
+      ok: true,
+      coords: {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      },
     };
   } catch {
-    return null;
+    // A rejection here is the browser saying it has no position to give -
+    // POSITION_UNAVAILABLE, or no geolocation provider at all.
+    return { ok: false, reason: 'unavailable' };
   }
 }
 

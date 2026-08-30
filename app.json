@@ -19,6 +19,7 @@
       "bundleIdentifier": "in.automass.halo",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Halo proves you are near someone without ever sending your coordinates off this device.",
+        "NSCameraUsageDescription": "Halo asks for three photos of your face so a reviewer can confirm you are a real person. They are never shown on your card.",
         "UIViewControllerBasedStatusBarAppearance": true
       }
     },
@@ -49,6 +50,14 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "Halo proves you are near someone without ever sending your coordinates off this device."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Halo asks for three photos of your face so a reviewer can confirm you are a real person. They are never shown on your card.",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": false
         }
       ],
       "expo-splash-screen"

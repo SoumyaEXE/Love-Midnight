@@ -23,6 +23,13 @@ import { DEFAULT_RADIUS } from '@/firebase/geo';
 import { maskFor, PEOPLE_BY_ID, SELF, SELF_VECTOR, VECTORS } from '@/data/people';
 import { hasOnboarded } from '@/state/onboarding';
 import {
+  emptyFaceCheck,
+  loadFaceCheck,
+  persistFaceCheck,
+  type FaceCheck,
+  type FaceShot,
+} from '@/state/faceCheck';
+import {
   canonicalise,
   emptyProfile,
   isComplete,
@@ -96,6 +103,17 @@ export type HaloState = {
   /** Records that the existing verification step passed. Does not perform it. */
   markVerified: () => void;
 
+  /** Where the photo identity review stands. Survives relaunch. */
+  faceCheck: FaceCheck;
+  /**
+   * Sends the three captures for review and records the ticket.
+   *
+   * Resolves when the submission is accepted, not when it is decided - the
+   * decision is a human one and arrives later, which is what the confirmation
+   * screen tells the user.
+   */
+  submitFaceCheck: (shots: FaceShot[]) => Promise<void>;
+
   discovery: Discovery;
   setDiscovery: (next: Partial<Discovery>) => void;
 
@@ -165,6 +183,7 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
   });
   const [mask, setMask] = useState<number[]>(defaultMask);
   const [verified, setVerifiedState] = useState<Verification>({ ok: false, at: null });
+  const [faceCheck, setFaceCheckState] = useState<FaceCheck>(emptyFaceCheck);
   const [discovery, setDiscoveryState] = useState<Discovery>({ radius: DEFAULT_RADIUS });
   const [profile, setProfileState] = useState<HaloProfile>(emptyProfile);
   const [profileCommit, setProfileCommit] = useState<Hex | null>(null);
@@ -188,17 +207,25 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
     let alive = true;
 
     (async () => {
-      const [storedVisibility, storedMask, storedVerified, storedDiscovery, storedProfile] =
-        await Promise.all([
-          AsyncStorage.getItem(KEY_VISIBILITY),
-          AsyncStorage.getItem(KEY_MASK),
-          AsyncStorage.getItem(KEY_VERIFIED),
-          AsyncStorage.getItem(KEY_DISCOVERY),
-          loadProfile(),
-        ]);
+      const [
+        storedVisibility,
+        storedMask,
+        storedVerified,
+        storedDiscovery,
+        storedProfile,
+        storedFaceCheck,
+      ] = await Promise.all([
+        AsyncStorage.getItem(KEY_VISIBILITY),
+        AsyncStorage.getItem(KEY_MASK),
+        AsyncStorage.getItem(KEY_VERIFIED),
+        AsyncStorage.getItem(KEY_DISCOVERY),
+        loadProfile(),
+        loadFaceCheck(),
+      ]);
       if (!alive) return;
 
       if (storedProfile) setProfileState(storedProfile);
+      if (storedFaceCheck) setFaceCheckState(storedFaceCheck);
 
       /*
        * Bring back the wallet from the last launch.
@@ -320,6 +347,30 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
       void AsyncStorage.setItem(KEY_VERIFIED, JSON.stringify(next));
       return next;
     });
+  }, []);
+
+  /**
+   * Hands the captures to review.
+   *
+   * The upload is simulated, and the simulation is the honest shape of the real
+   * thing rather than a `setTimeout` with a happy ending bolted on: it is the
+   * one call in this flow that can fail, so it is written as the one call that
+   * can fail, and the caller is expected to catch. When a reviewer queue exists
+   * this is the line it replaces - the images go there, and the ticket the
+   * server returns replaces the timestamp minted here.
+   *
+   * What it deliberately does not do is keep the photographs. Nothing in the
+   * app reads them after this point, so holding them would be storing a face
+   * for no purpose, and `shots` records the count instead.
+   */
+  const submitFaceCheck = useCallback(async (shots: FaceShot[]) => {
+    if (shots.length !== 3) throw new Error('Three photos are needed - front, left and right.');
+
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+
+    const next: FaceCheck = { status: 'pending', submittedAt: Date.now(), shots: shots.length };
+    setFaceCheckState(next);
+    await persistFaceCheck(next);
   }, []);
 
   const setDiscovery = useCallback((next: Partial<Discovery>) => {
@@ -490,6 +541,8 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
       setVisibility,
       verified,
       markVerified,
+      faceCheck,
+      submitFaceCheck,
       discovery,
       setDiscovery,
       mask,
@@ -518,6 +571,8 @@ export function HaloProvider({ children }: { children: React.ReactNode }) {
       setVisibility,
       verified,
       markVerified,
+      faceCheck,
+      submitFaceCheck,
       discovery,
       setDiscovery,
       mask,

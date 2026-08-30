@@ -1,5 +1,13 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import { useIsFocused, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlowBackdrop } from '@/components/ui/GlowBackdrop';
@@ -21,6 +29,7 @@ import { isComplete } from '@/state/profile';
 import { useNearbyUsers } from '@/hooks/useNearbyUsers';
 import { useRequests, useSentRequestStatus } from '@/hooks/useRequests';
 import { formatDistance, formatRadius, snapToGrid } from '@/firebase/geo';
+import type { FixOutcome } from '@/services/locationService';
 import type { NearbyUser } from '@/firebase/types';
 import type { Person } from '@/data/people';
 import { BUCKET_REACH_M } from '@/components/map/placement';
@@ -37,6 +46,26 @@ import { DISTANCE_LABEL, type DistanceBucket, type MatchBand } from '@/chain/mid
  */
 
 const BUCKETS: DistanceBucket[] = [0, 1, 2, 3];
+
+type LocateProblem = Extract<FixOutcome, { ok: false }>['reason'];
+
+/**
+ * What to say when the pin comes back empty.
+ *
+ * Each line names the thing the user can actually change. The old copy said
+ * "allow location for this site" for every failure, which is advice for exactly
+ * one of these three and misleading for the other two - a desktop with its OS
+ * location service switched off will not be helped by a browser permission it
+ * has already granted.
+ */
+const LOCATE_PROBLEM: Record<LocateProblem, string> = {
+  denied:
+    'Location is blocked for this site. Allow it from the icon in your browser’s address bar, then tap the pin again.',
+  unavailable:
+    'This device could not produce a position. On a desktop that usually means the operating system’s location service is switched off.',
+  timeout:
+    'Nothing came back in time, so the map is still on its default area. Tap the pin to try again.',
+};
 
 /**
  * The bucket a measured distance falls into.
@@ -226,6 +255,37 @@ export default function HomeScreen() {
     [nearbyLive.users],
   );
 
+  const [locating, setLocating] = useState(false);
+  /** Why the last attempt came back empty, or null. Cleared by the next one. */
+  const [locateProblem, setLocateProblem] = useState<LocateProblem | null>(null);
+
+  /**
+   * Put the map over the user.
+   *
+   * This control exists because on the web nothing else asks. `currentFix` at
+   * boot only reads a permission that has already been granted, and a browser
+   * answers `prompt` rather than `granted` until something calls
+   * `getCurrentPosition` - so the passive read returns null forever on a first
+   * visit. The only other caller of `locate` is the connect card below, which
+   * disappears the moment the wallet is connected and the profile is complete,
+   * leaving a finished account with no way to reach a permission dialog at all
+   * and a map parked on the demo origin in Manhattan.
+   *
+   * On a handset the sharing watcher would eventually prompt on its own, so
+   * this is redundant there rather than wrong - and a "centre on me" button is
+   * what someone reaches for on either platform anyway.
+   */
+  const onLocate = useCallback(async () => {
+    setLocating(true);
+    setLocateProblem(null);
+    try {
+      const outcome = await locate();
+      setLocateProblem(outcome.ok ? null : outcome.reason);
+    } finally {
+      setLocating(false);
+    }
+  }, [locate]);
+
   const [connecting, setConnecting] = useState(false);
   const walletConnected = wallet.status === 'connected';
 
@@ -386,7 +446,32 @@ export default function HomeScreen() {
             onSelect={onSelectSubject}
             onInteractionChange={setMapHeld}
           />
+
+          {/* Over the map, where every map app puts it. Outside the map
+              component on purpose: on web the map is a sandboxed iframe, so a
+              control drawn inside the document could not reach `locate` and a
+              press on it would never leave the frame. */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={center ? 'Recentre the map on you' : 'Show my location'}
+            accessibilityState={{ busy: locating }}
+            disabled={locating}
+            onPress={() => void onLocate()}
+            style={[styles.locate, center ? styles.locateOn : null]}
+          >
+            {locating ? (
+              <ActivityIndicator size="small" color={palette.white} />
+            ) : (
+              <Icon name="pin" size={19} color={center ? palette.violet : alpha.t72} />
+            )}
+          </Pressable>
         </View>
+
+        {/* Only after an attempt. Saying "the map is not on you" unprompted,
+            to someone who never asked it to be, is noise. */}
+        {locateProblem ? (
+          <Text style={[type.caption, styles.locateNote]}>{LOCATE_PROBLEM[locateProblem]}</Text>
+        ) : null}
 
         <Text style={[type.eyebrow, styles.distanceLabel]}>Distance</Text>
         <ScrollView
@@ -586,6 +671,28 @@ const styles = StyleSheet.create({
     marginTop: space['2xl'],
     marginBottom: space['2xl'],
     zIndex: 1,
+  },
+  locate: {
+    position: 'absolute',
+    right: space.lg,
+    bottom: space.lg,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    // Opaque rather than glass: it sits on a basemap whose brightness is not
+    // ours to predict, and a blurred disc over a pale tile reads as a smudge.
+    backgroundColor: 'rgba(12,10,17,0.88)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: alpha.t14,
+  },
+  locateOn: { borderColor: 'rgba(216,180,254,0.5)' },
+  locateNote: {
+    marginTop: -space.md,
+    marginBottom: space.lg,
+    color: alpha.t56,
+    lineHeight: 18,
   },
 
   distanceLabel: { marginBottom: space.md, zIndex: 2 },
