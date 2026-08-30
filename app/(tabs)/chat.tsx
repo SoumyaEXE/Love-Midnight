@@ -11,6 +11,7 @@ import { alpha, layout, palette, radius as radii, space } from '@/theme/tokens';
 import { fontFamily, type } from '@/theme/typography';
 import { CONVERSATIONS, PEOPLE_BY_ID } from '@/data/people';
 import { useConversations } from '@/hooks/useConversations';
+import { useConnectionCards } from '@/hooks/useRequests';
 import { demoKey, demoPersonId } from '@/firebase/paths';
 
 /**
@@ -59,6 +60,26 @@ export default function ChatScreen() {
    */
   const results: typeof CONVERSATIONS = [];
 
+  const liveRowIds = useMemo(() => live.rows.map((r) => r.otherUserId), [live.rows]);
+  const { cards: connections } = useConnectionCards();
+
+  /**
+   * Connections with nothing said yet.
+   *
+   * `userConversations` rows are written by `sendMessage` and by nothing else,
+   * so a pair who have just accepted each other have no row and appeared in
+   * this list nowhere - two people agree to talk and then cannot find each
+   * other. These are the same people, listed before the first message exists,
+   * and they drop out of this section the moment one is sent.
+   */
+  const fresh = useMemo(() => {
+    const talking = new Set(liveRowIds);
+    const needle2 = needle;
+    return connections
+      .filter((c) => !talking.has(c.wallet))
+      .filter((c) => !needle2 || c.name.toLowerCase().includes(needle2));
+  }, [connections, liveRowIds, needle]);
+
   const liveRows = useMemo(() => {
     if (!needle) return live.rows;
     return live.rows.filter(
@@ -97,6 +118,34 @@ export default function ChatScreen() {
           </View>
           <IconButton name="sliders" accessibilityLabel="Filter chats" style={styles.searchFilter} />
         </View>
+
+        {fresh.length > 0 ? (
+          <>
+            <Text style={[type.eyebrow, styles.sectionLabel]}>Connected</Text>
+            <View style={styles.list}>
+              {fresh.map((c) => (
+                <PressableCard
+                  key={c.wallet}
+                  radius={radii.lg}
+                  style={styles.row}
+                  accessibilityLabel={`Start a chat with ${c.name}`}
+                  onPress={() => router.push(`/chat/${c.wallet}`)}
+                >
+                  <Avatar email={c.avatar} size={44} online={c.online} />
+                  <View style={styles.rowText}>
+                    <Text style={type.body} numberOfLines={1}>
+                      {c.name}
+                    </Text>
+                    <Text style={type.callout} numberOfLines={1}>
+                      {c.online ? 'Active now' : 'Say hello'}
+                    </Text>
+                  </View>
+                  <Icon name="chevron-right" size={18} color={alpha.t28} />
+                </PressableCard>
+              ))}
+            </View>
+          </>
+        ) : null}
 
         {liveRows.length > 0 ? (
           <>

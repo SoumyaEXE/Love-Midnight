@@ -13,7 +13,8 @@ import {
 import { get, ref } from 'firebase/database';
 import { database } from '@/firebase/config';
 import { paths, walletKey } from '@/firebase/paths';
-import type { RemoteProfile, RequestStatus } from '@/firebase/types';
+import type { RemotePresence, RemoteProfile, RequestStatus } from '@/firebase/types';
+import { watchPresence } from '@/services/presenceService';
 import { useFirebase } from '@/state/firebase';
 import { useHalo } from '@/state/store';
 
@@ -233,6 +234,101 @@ export function useRequestCards(): {
       alive = false;
     };
   }, [key]);
+
+  return { cards, loading };
+}
+
+export type ConnectionCard = {
+  wallet: string;
+  name: string;
+  avatar: string;
+  online: boolean;
+  lastSeen: number;
+};
+
+/**
+ * Accepted connections, each with the card and presence of the other party.
+ *
+ * This exists because an accepted request previously vanished from the app
+ * entirely. The requests sheet filters on `pending`, so accepting removed the
+ * row from the only list that showed it; and the chat list is built from
+ * `userConversations`, whose rows are written by `sendMessage` and by nothing
+ * else - so a connection with no messages yet had no row anywhere. Two people
+ * could agree to talk and then find no trace of each other.
+ *
+ * Profiles are read once. Presence is subscribed, because "is my friend online"
+ * is the question this list is looked at to answer, and the set is small - it
+ * is people who have agreed to talk to you, not everyone in range.
+ */
+export function useConnectionCards(): { cards: ConnectionCard[]; loading: boolean } {
+  const { connections, loading } = useRequests();
+  const [profiles, setProfiles] = useState<Record<string, RemoteProfile>>({});
+  const [presence, setPresence] = useState<Record<string, RemotePresence>>({});
+
+  // A stable key, so the effects do not re-run on every re-render of a Set that
+  // happens to hold the same wallets.
+  const key = useMemo(() => [...connections].sort().join(','), [connections]);
+
+  useEffect(() => {
+    let alive = true;
+    const wallets = key ? key.split(',') : [];
+    if (wallets.length === 0) {
+      setProfiles({});
+      return;
+    }
+
+    void Promise.all(
+      wallets.map(async (wallet) => {
+        try {
+          const snapshot = await get(ref(database, paths.profile(wallet)));
+          return [wallet, snapshot.val() as RemoteProfile | null] as const;
+        } catch {
+          return [wallet, null] as const;
+        }
+      }),
+    ).then((pairs) => {
+      if (!alive) return;
+      setProfiles(
+        Object.fromEntries(pairs.filter((p): p is [string, RemoteProfile] => p[1] !== null)),
+      );
+    });
+
+    return () => {
+      alive = false;
+    };
+  }, [key]);
+
+  useEffect(() => {
+    const wallets = key ? key.split(',') : [];
+    const offs = wallets.map((wallet) =>
+      watchPresence(wallet, (value) =>
+        setPresence((prev) => ({ ...prev, [wallet]: value })),
+      ),
+    );
+    return () => {
+      for (const off of offs) off();
+    };
+  }, [key]);
+
+  const cards = useMemo(() => {
+    const wallets = key ? key.split(',') : [];
+    return wallets
+      .map((wallet) => {
+        const profile = profiles[wallet];
+        // A connection whose card cannot be read is not renderable. It is also
+        // not an error: the other side may have withdrawn their profile.
+        if (!profile?.name) return null;
+        return {
+          wallet,
+          name: profile.name,
+          avatar: profile.avatar,
+          online: presence[wallet]?.online ?? false,
+          lastSeen: presence[wallet]?.lastSeen ?? 0,
+        };
+      })
+      .filter((c): c is ConnectionCard => c !== null)
+      .sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
+  }, [key, profiles, presence]);
 
   return { cards, loading };
 }

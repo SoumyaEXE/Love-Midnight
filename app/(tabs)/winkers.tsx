@@ -25,7 +25,7 @@ import { PEOPLE_BY_ID, type Wink } from '@/data/people';
  */
 const DEMO_WINKS: Wink[] = [];
 import { useHalo } from '@/state/store';
-import { useRequestCards, useRequests } from '@/hooks/useRequests';
+import { useConnectionCards, useRequestCards, useRequests } from '@/hooks/useRequests';
 
 /*
  * No entering animation on these rows.
@@ -117,6 +117,7 @@ export default function WinkersScreen() {
 
   const requests = useRequests();
   const { cards } = useRequestCards();
+  const { cards: connections } = useConnectionCards();
 
   /**
    * Only real requests. The roster's stand-ins are gone: a persona has no
@@ -213,6 +214,48 @@ export default function WinkersScreen() {
           </View>
         ) : null}
 
+        {/* Accepted connections.
+            Before this they went nowhere: the requests sheet filters on
+            `pending`, so accepting removed the only row that showed them, and
+            the chat list is built from `userConversations`, which is not
+            written until somebody sends a message. Two people could agree to
+            talk and find no trace of each other in the app. */}
+        {connections.length > 0 ? (
+          <View style={styles.grid}>
+            {connections.map((c) => (
+              <Pressable
+                key={c.wallet}
+                accessibilityRole="button"
+                accessibilityLabel={`Open a chat with ${c.name}`}
+                onPress={() => router.push(`/chat/${c.wallet}`)}
+                style={{ width: columnWidth }}
+              >
+                <Card radius={radii.card} style={styles.tile}>
+                  <View style={styles.tileHead}>
+                    <Avatar email={c.avatar} size={42} online={c.online} />
+                  </View>
+
+                  <Text style={[type.body, styles.tileName]} numberOfLines={1}>
+                    {c.name}
+                  </Text>
+                  <Text style={[type.caption, styles.tileKind]} numberOfLines={1}>
+                    {c.online ? 'Active now' : 'Connected'}
+                  </Text>
+
+                  <MetalButton
+                    label="Message"
+                    size="sm"
+                    variant={c.online ? 'violet' : 'metal'}
+                    fullWidth
+                    onPress={() => router.push(`/chat/${c.wallet}`)}
+                    style={styles.tileAction}
+                  />
+                </Card>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
         <View style={styles.grid}>
           {visible.map((wink) => {
             const person = PEOPLE_BY_ID.get(wink.personId);
@@ -260,18 +303,25 @@ export default function WinkersScreen() {
           })}
         </View>
 
-        {visible.length === 0 ? (
+        {visible.length === 0 && connections.length === 0 ? (
           <View style={styles.empty}>
             <Text style={[type.callout, styles.emptyLabel]}>
-              Nothing matches those filters.
+              {activeCount > 0
+                ? 'Nothing matches those filters.'
+                : 'Nobody has connected with you yet. Send a request from the map.'}
             </Text>
-            <MetalButton
-              label="Clear filters"
-              variant="metal"
-              size="md"
-              onPress={() => setFilters(DEFAULT_FILTERS)}
-              style={styles.emptyAction}
-            />
+            {/* Only when a filter is actually hiding something. Otherwise the
+                list is empty because nothing exists yet, and offering to clear
+                filters points at the wrong cause. */}
+            {activeCount > 0 ? (
+              <MetalButton
+                label="Clear filters"
+                variant="metal"
+                size="md"
+                onPress={() => setFilters(DEFAULT_FILTERS)}
+                style={styles.emptyAction}
+              />
+            ) : null}
           </View>
         ) : null}
       </ScrollView>
